@@ -32,6 +32,16 @@ const games = [
     tags: ["компанія", "рольова"],
     component: lazy(() => import("./toxic-interview/index.jsx")),
   },
+  {
+    slug: "who-am-i",
+    title: "Хто я: Токсичне дзеркало",
+    description: "Вгадай слово в себе на лобі, поки твої друзі відповідають на питання з максимально токсичними або абсурдними умовами!",
+    emoji: "🪞",
+    minPlayers: 2,
+    maxPlayers: 15,
+    tags: ["компанія", "веселощі", "вгадування"],
+    component: lazy(() => import("./who-am-i/index.jsx")),
+  },
 ];
 
 export default games;
