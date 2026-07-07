@@ -22,6 +22,16 @@ const games = [
     tags: ["компанія", "блеф", "детектив"],
     component: lazy(() => import("./spy/index.jsx")),
   },
+  {
+    slug: "toxic-interview",
+    title: "Токсичне Інтерв'ю",
+    description: "Кандидат приховує свою ваду, HR-ці не знають кандидата — співбесіда на межі здорового глузду!",
+    emoji: "☠️",
+    minPlayers: 3,
+    maxPlayers: 10,
+    tags: ["компанія", "рольова"],
+    component: lazy(() => import("./toxic-interview/index.jsx")),
+  },
 ];
 
 export default games;
