@@ -505,24 +505,91 @@ function Setup({ onStart }) {
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 24 }}>
       {/* Заголовок */}
-      <div style={{ textAlign: "center", paddingTop: 8 }}>
-        <div style={{ fontSize: "3rem", marginBottom: 8 }}>🏚️</div>
+      <div
+        style={{
+          textAlign: "center",
+          background: "linear-gradient(135deg, rgba(124, 106, 247, 0.12), rgba(26, 26, 36, 0.8))",
+          border: "1px solid rgba(124, 106, 247, 0.3)",
+          borderRadius: "var(--radius)",
+          padding: "32px 20px",
+          boxShadow: "0 8px 32px rgba(0, 0, 0, 0.2), inset 0 1px 0 rgba(255, 255, 255, 0.05)",
+          position: "relative",
+          overflow: "hidden",
+        }}
+      >
+        {/* Декоративні елементи на фоні */}
+        <div style={{
+          position: "absolute",
+          top: "-20px",
+          right: "-20px",
+          width: "100px",
+          height: "100px",
+          background: "var(--accent)",
+          filter: "blur(60px)",
+          opacity: 0.3,
+          borderRadius: "50%",
+        }} />
+
+        <div
+          style={{
+            display: "inline-flex",
+            alignItems: "center",
+            justifyContent: "center",
+            width: 64,
+            height: 64,
+            borderRadius: "16px",
+            background: "linear-gradient(135deg, var(--bg3), var(--bg2))",
+            border: "1px solid rgba(255, 255, 255, 0.08)",
+            fontSize: "2.5rem",
+            marginBottom: 16,
+            boxShadow: "0 4px 12px rgba(0,0,0,0.3)",
+            transform: "rotate(-5deg)",
+          }}
+        >
+          🏚️
+        </div>
+
+        <div
+          style={{
+            fontSize: "0.7rem",
+            fontWeight: 800,
+            letterSpacing: "0.2em",
+            color: "var(--accent2)",
+            textTransform: "uppercase",
+            marginBottom: 6,
+          }}
+        >
+          Симулятор виживання
+        </div>
+
         <h1
           style={{
-            fontSize: "1.8rem",
-            fontWeight: 800,
-            background: "linear-gradient(135deg, var(--accent2), var(--accent))",
+            fontSize: "2.2rem",
+            fontWeight: 900,
+            background: "linear-gradient(180deg, #ffffff 0%, var(--accent2) 100%)",
             WebkitBackgroundClip: "text",
             WebkitTextFillColor: "transparent",
             backgroundClip: "text",
-            letterSpacing: "-0.03em",
+            letterSpacing: "-0.02em",
+            textShadow: "0 2px 10px rgba(124, 106, 247, 0.2)",
+            margin: 0,
           }}
         >
-          Бункер
+          БУНКЕР
         </h1>
-        <p style={{ color: "var(--text2)", fontSize: "0.9rem", marginTop: 4 }}>
-          3–5 гравців · Pass &amp; Play
-        </p>
+
+        <div style={{
+          display: "inline-block",
+          marginTop: 12,
+          padding: "4px 12px",
+          background: "rgba(0,0,0,0.3)",
+          border: "1px solid rgba(255,255,255,0.05)",
+          borderRadius: 999,
+        }}>
+          <p style={{ color: "var(--text2)", fontSize: "0.85rem", fontWeight: 600 }}>
+            3–5 гравців <span style={{ color: "var(--bg3)", margin: "0 4px" }}>|</span> Pass &amp; Play
+          </p>
+        </div>
       </div>
 
       {/* Список гравців */}
@@ -765,9 +832,9 @@ function Catastrophe({ catastrophe, onNext }) {
 
 // ─── ЕКРАН КАРТКИ ГРАВЦЯ ─────────────────────────────────────────────────────
 
-// step: "pass" → "locked" → "revealed"
+// step: "locked" → "revealed"
 function RoleCard({ role, onDone }) {
-  const [step, setStep] = useState("pass");
+  const [step, setStep] = useState("locked");
 
   const rows = [
     { icon: "💼", label: "Професія", value: role.profession },
@@ -778,67 +845,7 @@ function RoleCard({ role, onDone }) {
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
-
-      {/* КРОК 1: Запрошення взяти телефон (бачать усі) */}
-      {step === "pass" && (
-        <>
-          <div style={{ textAlign: "center" }}>
-            <div style={{ fontSize: "2.8rem", marginBottom: 14 }}>📱</div>
-            <div
-              style={{
-                fontSize: "0.75rem",
-                fontWeight: 700,
-                letterSpacing: "0.12em",
-                color: "var(--accent2)",
-                textTransform: "uppercase",
-                marginBottom: 10,
-              }}
-            >
-              Наступний гравець
-            </div>
-            <h2
-              style={{
-                fontSize: "2rem",
-                fontWeight: 800,
-                background: "linear-gradient(135deg,var(--accent2),var(--accent))",
-                WebkitBackgroundClip: "text",
-                WebkitTextFillColor: "transparent",
-                backgroundClip: "text",
-              }}
-            >
-              {role.name}
-            </h2>
-            <p style={{ color: "var(--text2)", fontSize: "0.9rem", marginTop: 10, lineHeight: 1.5 }}>
-              Передайте телефон цьому гравцю
-            </p>
-          </div>
-
-          <div
-            style={{
-              background: "var(--bg2)",
-              borderRadius: "var(--radius)",
-              border: "1px solid var(--bg3)",
-              padding: "20px 16px",
-              textAlign: "center",
-            }}
-          >
-            <p style={{ color: "var(--text2)", fontSize: "0.9rem", lineHeight: 1.5 }}>
-              Коли <strong style={{ color: "var(--text)" }}>{role.name}</strong> отримає телефон —
-              натисни кнопку нижче
-            </p>
-          </div>
-
-          <button
-            className="btn-primary"
-            onClick={() => setStep("locked")}
-            style={{ fontSize: "1.05rem" }}
-          >
-            Це я, показати роль 👁
-          </button>
-        </>
-      )}
-
-      {/* КРОК 2: Вікно передачі — тільки гравець бачить (закрита картка) */}
+      {/* КРОК 1: Вікно передачі — тільки гравець бачить (закрита картка) */}
       {step === "locked" && (
         <>
           <div style={{ textAlign: "center" }}>
@@ -889,13 +896,10 @@ function RoleCard({ role, onDone }) {
             onClick={() => setStep("revealed")}
             style={{ fontSize: "1.05rem" }}
           >
-            Показати мою роль 🔓
+            Це я, показати роль 👁
           </button>
         </>
       )}
-
-
-      {/* КРОК 3: Роль відкрита */}
       {step === "revealed" && (
         <>
           <div style={{ textAlign: "center" }}>
@@ -1420,7 +1424,7 @@ function Results({ votes, players, roles, onRestart }) {
         </h2>
         {candidates.length > 1 && (
           <p style={{ color: "var(--text2)", fontSize: "0.85rem", marginTop: 8 }}>
-            ⚖️ Нічия — переможець обраний випадково
+            ⚖️ Нічия — Вигнаний з бункера випадково
           </p>
         )}
       </div>
