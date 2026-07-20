@@ -1,6 +1,62 @@
 import { Link } from "react-router-dom";
 
 export default function HomePage({ games }) {
+  const multiplayerGames = games.filter(g => g.tags?.includes("мультиплеєр"));
+  const localGames = games.filter(g => !g.tags?.includes("мультиплеєр"));
+
+  const renderGameCard = (game) => {
+    const hasMultiplayer = game.tags?.includes("мультиплеєр");
+    const hasLocal = game.tags?.includes("pass-and-play");
+
+    let badgeText = "";
+    let badgeType = "";
+    if (hasMultiplayer && hasLocal) {
+      badgeText = "Локальна Мультиплеєр";
+      badgeType = "universal";
+    } else if (hasMultiplayer) {
+      badgeText = "Мультиплеєр";
+      badgeType = "online";
+    } else if (hasLocal) {
+      badgeText = "Локальна";
+      badgeType = "local";
+    }
+
+    const visualTags = game.tags?.filter(
+      (t) => t !== "мультиплеєр" && t !== "pass-and-play"
+    );
+
+    return (
+      <Link
+        key={game.slug}
+        to={`/games/${game.slug}`}
+        className={`game-card ${hasMultiplayer ? "multiplayer" : ""}`}
+      >
+        {badgeText && (
+          <div className={`game-badge ${badgeType}`}>{badgeText}</div>
+        )}
+        <span className="game-card-emoji">{game.emoji}</span>
+        <div className="game-card-info">
+          <h2 className="game-card-title">{game.title}</h2>
+          <p className="game-card-desc">{game.description}</p>
+          {(game.minPlayers || game.maxPlayers) && (
+            <span className="game-card-players">
+              👥 {game.minPlayers}–{game.maxPlayers} гравців
+            </span>
+          )}
+          {visualTags && visualTags.length > 0 && (
+            <div className="game-card-tags">
+              {visualTags.map((t) => (
+                <span key={t} className="tag">
+                  {t}
+                </span>
+              ))}
+            </div>
+          )}
+        </div>
+      </Link>
+    );
+  };
+
   return (
     <div className="page home-page">
       <header className="home-header">
@@ -19,36 +75,25 @@ export default function HomePage({ games }) {
             <p>Скоро тут з'являться нові ігри!</p>
           </div>
         ) : (
-          <div className="games-grid">
-            {games.map((game) => (
-              <Link
-                key={game.slug}
-                to={`/games/${game.slug}`}
-                className="game-card"
-              >
-                <span className="game-card-emoji">{game.emoji}</span>
-                <div className="game-card-info">
-                  <h2 className="game-card-title">{game.title}</h2>
-                  <p className="game-card-desc">{game.description}</p>
-                  {(game.minPlayers || game.maxPlayers) && (
-                    <span className="game-card-players">
-                      👥 {game.minPlayers}–{game.maxPlayers} гравців
-                    </span>
-                  )}
-                  {game.tags && (
-                    <div className="game-card-tags">
-                      {game.tags.map((t) => (
-                        <span key={t} className="tag">
-                          {t}
-                        </span>
-                      ))}
-                    </div>
-                  )}
+          <>
+            {multiplayerGames.length > 0 && (
+              <>
+                <h2 className="section-title">🌐 Онлайн Мультиплеєр</h2>
+                <div className="games-grid">
+                  {multiplayerGames.map((g) => renderGameCard(g))}
                 </div>
-                <span className="game-card-arrow">→</span>
-              </Link>
-            ))}
-          </div>
+              </>
+            )}
+
+            {localGames.length > 0 && (
+              <>
+                <h2 className="section-title">📱 На одному пристрої</h2>
+                <div className="games-grid">
+                  {localGames.map((g) => renderGameCard(g))}
+                </div>
+              </>
+            )}
+          </>
         )}
       </main>
     </div>

@@ -23,38 +23,11 @@ function saveNames(names) {
   } catch { }
 }
 
-// ─── Словник ────────────────────────────────────────────────────────────────
-const DICTIONARY = [
-  { category: "Те, що ми забуваємо вдома", words: ["Праска (увімкнена)", "Ключі від квартири", "Здоровий глузд", "Парасоля", "Гаманець", "Паспорт"] },
-  { category: "Їжа, яку важко їсти красиво", words: ["Шаурма", "Спагеті", "Кавун", "Бургер з потрійною котлетою", "Цукрова вата", "Кукурудза в качані"] },
-  { category: "Тварини, схожі на картоплю", words: ["Мопс", "Морж", "Хом'як", "Бегемот", "Жаба", "Морська свинка"] },
-  { category: "Місця, де не можна сміятись", words: ["Похорон", "Кабінет стоматолога", "Іспит з математики", "Співбесіда", "В укритті", "На паспортному контролі"] },
-  { category: "Професії з фільмів жахів", words: ["Екзорцист", "Нічний сторож", "Клоун-аніматор", "Гробар", "Водій шкільного автобуса", "Дослідник покинутих лікарень"] },
-  { category: "Що лежить під ліжком", words: ["Монстр", "Одинока шкарпетка", "Клубок пилу", "Кіт", "Загублений пульт", "Скелет у шафі (але під ліжком)"] },
-  { category: "Те, що роблять у спортзалі", words: ["Селфі біля дзеркала", "Страждають на біговій доріжці", "П'ють протеїн", "Роблять присідання", "Лежать на маті", "Стогнуть під штангою"] },
-  { category: "Фентезійні істоти, які втратили форму", words: ["Товстий Дракон", "Єдиноріг без рогу", "Лисий перевертень", "Вампір на дієті", "Гоблін з іпотекою", "Русалка в кросівках"] },
-  { category: "Речі, які роблять нас старшими", words: ["Окуляри для читання", "Тонометр (вимірювач тиску)", "Валідол", "Клітчаста сумка-баул", "Розсада в стаканчику", "В'язаний светр з оленями"] },
-  { category: "Що ми знаходимо під диваном", words: ["Засохлий шматок піци", "Деталька від Лего", "Клубок котячої шерсті", "Стара монетка", "Загублена шкарпетка", "Фантик від цукерки"] },
-  { category: "Символи розкоші в селі", words: ["Трактор", "Супутникова тарілка", "Золоті зуби", "Килим на стіні", "Свиня-рекордсменка", "Плазмовий телевізор на пів стіни"] },
-  { category: "Транспорт для зомбі-апокаліпсису", words: ["Броньований трактор", "Велосипед з шипами", "Візок із супермаркету", "Літаючий килим", "Екскурсійний автобус", "Електросамокат"] },
-  { category: "Найгірші подарунки на День народження", words: ["Шампунь проти лупи", "Статуетка-пилозбірник", "Магнітик з моря", "Шкарпетки", "Книга «Як схуднути»", "Набір каструль"] },
-  { category: "Люди, які бісять у транспорті", words: ["Бабуся з візком", "Пасажир із величезним рюкзаком", "Контролер з терміналом", "Людина з відкритою шаурмою", "Водій з шансоном (мікрофон)", "Студент, що спить на плечі"] },
-  { category: "Що лежить у жіночій сумочці", words: ["Помада без кришечки", "Ключі на самому дні", "Пилочка для нігтів", "Балончик від маніяків", "Чеки за 2021 рік", "Надгризене яблуко"] },
-  { category: "Речі, які видають дивні звуки вночі", words: ["Старий холодильник", "Сусід із дрилем", "Кіт, який влаштував тигидик", "Капаючий кран", "Скрипучі двері", "Комар над вухом"] },
-  { category: "Суперсили, які нікому не потрібні", words: ["Вміння літати на висоті 5 см", "Супер-нюх у маршрутці", "Читання думок комарів", "Невидимість у повній темряві", "Вміння дихати в калюжі", "Примагнічування дрібних монет"] },
-  { category: "Що ми робимо, коли зникає світло", words: ["Запалюємо свічку", "Світимо ліхтариком у телефон", "Дивимось у вікно на сусідів", "Відкриваємо холодильник", "Граємо в карти", "Лягаємо спати о 20:00"] },
-  { category: "Предмети, які завжди губляться", words: ["Другий носок", "Пульт від телевізора", "Гумка для волосся", "Ключі від машини", "Кришечка від ручки", "Зарядка для телефону"] },
-  { category: "Що ми беремо на шашлики", words: ["Мангал, який розвалюється", "Шампури", "Гітара", "Засіб від комарів", "Кетчуп", "Складаний стільчик"] },
-  { category: "Екіпірування лінивого студента", words: ["Шпаргалка на руці", "Банка енергетика", "Доширак (Мівіна)", "Навушник у вусі (мікронавушник)", "Подушка для сну на парті", "Будильник, який дзвонить вдесяте"] },
-  { category: "Дивні причини для запізнення на роботу", words: ["Проспав", "Кіт ліг на обличчя", "Забув вимкнути праску", "Застряг у ліфті", "Ретроградний Меркурій (астрологія)", "НЛО викрало по дорозі"] },
-  { category: "Те, що складно пояснити інопланетянину", words: ["Селфі-палиця", "Черга в поліклініку", "Туалетний папір", "Спіннер", "Надувний круг-фламінго", "Чохли на пульт від телевізора"] },
-  { category: "Сумнівна їжа на вокзалі", words: ["Біляш із м'ясом невідомого походження", "Сосиска в тісті", "Розчинна кава в пластиковому стаканчику", "Чебурек", "Пиріжок з капустою", "Льодяник на паличці «Півник»"] },
-  { category: "Як ми рятуємось від спеки", words: ["Вентилятор", "Мокрий рушник на голові", "Морозиво", "Кондиціонер", "Відкритий холодильник", "Надувний басейн"] },
-  { category: "Речі, які ми купуємо, але не використовуємо", words: ["Гантелі (лежать під ліжком)", "Бігова доріжка (працює як вішалка)", "Складна соковижималка", "Красивий блокнот", "Аромасвічка", "Набір для фондю"] },
-  { category: "Те, що не варто робити на першому побаченні", words: ["Плакати", "Їсти часник (цілу головку)", "Показувати фокуси з картами", "В'язати", "Грати на баяні", "Просити гроші в борг"] },
-  { category: "Казкові артефакти в сучасному світі", words: ["Чарівна паличка", "Шапка-невидимка", "Килим-літак", "Чоботи-скороходи", "Дзеркальце, що говорить", "Скатертина-самобранка"] }
-];
+//Завантаження данних
 
+import content from "./content.json";
+
+const DICTIONARY = content.dictionary;
 // ─── Кольори гравців ─────────────────────────────────────────────────────────
 const PLAYER_COLORS = [
   { name: "Червоний", hex: "#E53935" },
@@ -79,9 +52,15 @@ function buildInitialState() {
 // ─── Функція перемалювання canvas (спільна) ──────────────────────────────────
 function redrawCanvas(canvas, allPaths) {
   if (!canvas) return;
+  const dpr = canvas._dpr || 1;
   const ctx = canvas.getContext("2d");
+  ctx.save();
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   ctx.fillStyle = "#ffffff";
-  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  // Малюємо у логічних CSS-пікселях (canvas.width/dpr — логічна ширина)
+  const lw = canvas.width / dpr;
+  const lh = canvas.height / dpr;
+  ctx.fillRect(0, 0, lw, lh);
   allPaths.forEach((path) => {
     if (!path.points || path.points.length < 2) return;
     ctx.beginPath();
@@ -95,6 +74,18 @@ function redrawCanvas(canvas, allPaths) {
     }
     ctx.stroke();
   });
+  ctx.restore();
+}
+
+// ─── Налаштування HiDPI canvas ────────────────────────────────────────────────
+// Множить внутрішню роздільну здатність на devicePixelRatio, CSS-розмір не чіпає.
+// Повертає dpr, щоб можна було враховувати при малюванні.
+function setupHiDPICanvas(canvas, cssWidth, cssHeight) {
+  const dpr = window.devicePixelRatio || 1;
+  canvas.width = Math.round(cssWidth * dpr);
+  canvas.height = Math.round(cssHeight * dpr);
+  canvas._dpr = dpr; // зберігаємо для redrawCanvas
+  return dpr;
 }
 
 // ─── Стилі ──────────────────────────────────────────────────────────────────
@@ -834,12 +825,11 @@ function DrawingScreen({ players, drawPhase, paths, setPaths, onDone, onUndo }) 
     const container = canvas.parentElement;
 
     const setSize = () => {
-      const w = container.clientWidth;
-      const h = Math.min(w * 0.72, 380);
-      canvas.width = w;
-      canvas.height = h;
-      canvasSizeRef.current = { w, h };
-      // Redraw all saved paths after resize
+      const cssW = container.clientWidth;
+      const cssH = Math.min(cssW * 0.72, 380);
+      // HiDPI: внутрішній буфер × devicePixelRatio, CSS-розмір незмінний
+      setupHiDPICanvas(canvas, cssW, cssH);
+      canvasSizeRef.current = { w: cssW, h: cssH };
       redrawCanvas(canvas, paths);
     };
 
@@ -854,17 +844,18 @@ function DrawingScreen({ players, drawPhase, paths, setPaths, onDone, onUndo }) 
     redrawCanvas(canvasRef.current, paths);
   }, [paths]);
 
-  // ─── Get pointer position scaled to canvas resolution ────────────────────
+  // ─── Get pointer position in logical CSS pixels ───────────────────────────
+  // Важливо: повертаємо ЛОГІЧНІ пікселі (не фізичні).
+  // redrawCanvas / live-draw самі застосовують setTransform(dpr,...),
+  // тому координати не потребують множення на dpr.
   const getPos = useCallback((e) => {
     const canvas = canvasRef.current;
     if (!canvas) return { x: 0, y: 0 };
     const rect = canvas.getBoundingClientRect();
-    const scaleX = canvas.width / rect.width;
-    const scaleY = canvas.height / rect.height;
     const src = e.touches ? e.touches[0] : e;
     return {
-      x: (src.clientX - rect.left) * scaleX,
-      y: (src.clientY - rect.top) * scaleY,
+      x: src.clientX - rect.left,
+      y: src.clientY - rect.top,
     };
   }, []);
 
@@ -889,9 +880,12 @@ function DrawingScreen({ players, drawPhase, paths, setPaths, onDone, onUndo }) 
     currentPath.current.points.push(pos);
 
     const canvas = canvasRef.current;
+    const dpr = canvas._dpr || 1;
     const ctx = canvas.getContext("2d");
     const pts = currentPath.current.points;
     if (pts.length >= 2) {
+      ctx.save();
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
       ctx.beginPath();
       ctx.strokeStyle = currentColorRef.current;
       ctx.lineWidth = 6;
@@ -900,6 +894,7 @@ function DrawingScreen({ players, drawPhase, paths, setPaths, onDone, onUndo }) 
       ctx.moveTo(pts[pts.length - 2].x, pts[pts.length - 2].y);
       ctx.lineTo(pts[pts.length - 1].x, pts[pts.length - 1].y);
       ctx.stroke();
+      ctx.restore();
     }
   }, [getPos]);
 
@@ -1047,10 +1042,9 @@ function DiscussionScreen({ paths, players, onNext }) {
     const canvas = canvasRef.current;
     if (!canvas) return;
     const container = canvas.parentElement;
-    const w = container.clientWidth;
-    const h = Math.min(w * 0.72, 340);
-    canvas.width = w;
-    canvas.height = h;
+    const cssW = container.clientWidth;
+    const cssH = Math.min(cssW * 0.72, 340);
+    setupHiDPICanvas(canvas, cssW, cssH);
     redrawCanvas(canvas, paths);
   }, [paths]);
 
@@ -1224,10 +1218,9 @@ function ResultsScreen({ players, fakeIndex, votes, gameWord, paths, onRestart }
       const canvas = canvasRef.current;
       if (!canvas) return;
       const container = canvas.parentElement;
-      const w = container.clientWidth;
-      const h = Math.min(w * 0.72, 300);
-      canvas.width = w;
-      canvas.height = h;
+      const cssW = container.clientWidth;
+      const cssH = Math.min(cssW * 0.72, 300);
+      setupHiDPICanvas(canvas, cssW, cssH);
       redrawCanvas(canvas, paths);
     });
   }, [step, paths]);

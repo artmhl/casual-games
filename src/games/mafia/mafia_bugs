@@ -1,0 +1,171 @@
+🐛 Проблема 1: Зникає перевірка Дона Чому це відбувається:
+Коли Дон натискає кнопку перевірки, виконується функція donCheck, яка оновлює базу даних і ставить donCheckUsed: true.
+В інтерфейсі MafiaAction є умова: {isDon && !donCheckUsed && ( ... )}. Через те, що змінна стає true, увесь цей блок миттєво зникає ще до того, як гравець встигне побачити текст «✓ Перевіряєш: [Ім'я]».  Рішення:Треба змінити умову так, щоб блок зникав у наступні ночі, але залишався видимим у поточну ніч, якщо ціль уже обрана.🐛 Проблема 2: Ієрархія Мафії не відображаєтьсяЧому це відбувається:На екрані RoleRevealScreen масив mafiaTeam виключає самого гравця (p.name !== playerName) і не сортується. Вони просто бачать рандомний список колег без рангів.  В екрані MafiaAction статус "Дона" жорстко прив'язаний до початкової ролі (myRole === "don"). Якщо Дон помирає, новий decisionMaker отримує червону кнопку для стрільби, але інтерфейс продовжує називати його рядовим мафіозі.  🛠️ Як виправити (Готовий код)Тобі потрібно замінити всього два компоненти у файлі index.jsx на ці виправлені версії:1. Заміни компонент RoleRevealScreenЦей код покаже мафії їхню ієрархію на старті:JavaScript/* ═══════════════════════════════════════════════
+   SCREEN: ROLE REVEAL
+═══════════════════════════════════════════════ */
+function RoleRevealScreen({ gameState, playerName, onReady }) {
+  const myPlayer = gameState.players.find(p => p.name === playerName);
+  const role = ROLES[myPlayer?.role] || ROLES.civilian;
+  const isReady = myPlayer?.isReady;
+  const waiting = gameState.players.filter(p => !p.isReady && !p.isLeft).length;
+  
+  // Збираємо всю мафію, сортуємо: спочатку Дон, потім рядові за порядком спадкування
+  const mafiaTeamRaw = role.team === "mafia" 
+    ? gameState.players.filter(p => p.role === "mafia" || p.role === "don")
+    : [];
+  const donPlayer = mafiaTeamRaw.find(p => p.role === "don");
+  const regularMafias = mafiaTeamRaw.filter(p => p.role === "mafia");
+  const mafiaTeam = donPlayer ? [donPlayer, ...regularMafias] : regularMafias;
+
+  return (
+    <div style={{ ...S.col, animation: "maf-fadeIn 0.4s ease" }}>
+      <div style={S.center}><p style={S.sub}>Твоя роль у цій грі</p></div>
+
+      <div style={{
+        ...S.card, ...S.center, gap: 16, padding: "32px 24px",
+        background: `linear-gradient(135deg,${role.color}18,${role.color}08)`,
+        border: `2px solid ${role.color}55`, boxShadow: role.glow,
+        animation: "maf-roleReveal 0.6s cubic-bezier(0.34,1.56,0.64,1)",
+      }}>
+        <div style={{ fontSize: "4.5rem", lineHeight: 1 }}>{role.emoji}</div>
+        <h2 style={{ color: role.color, fontSize: "1.6rem", fontWeight: 800, margin: 0 }}>{role.name}</h2>
+        <span style={{ ...S.chip, background: `${role.color}20`, color: role.color, border: `1px solid ${role.color}40`, padding: "4px 14px", fontSize: "0.8rem" }}>
+          Команда: {role.teamName}
+        </span>
+        <p style={{ color: "var(--text)", lineHeight: 1.65, margin: 0, maxWidth: 280 }}>{role.description}</p>
+      </div>
+
+      {mafiaTeam.length > 0 && (
+        <div style={{ ...S.card, background: "rgba(252,92,92,0.06)", border: "1px solid rgba(252,92,92,0.2)" }}>
+          <p style={{ ...S.label, color: "#fc5c5c", margin: "0 0 10px" }}>🔫 Твоя мафіозна команда</p>
+          {mafiaTeam.map((p, idx) => {
+            const isMe = p.name === playerName;
+            const badge = p.role === "don" ? "Бос 🕴️" : `Спадкоємець ${p.role === "don" ? idx : idx}`;
+            
+            return (
+              <div key={p.name} style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 0" }}>
+                <span style={{ fontSize: "1.1rem" }}>{ROLES[p.role]?.emoji}</span>
+                <span style={{ fontWeight: isMe ? 800 : 600, color: isMe ? "var(--text)" : "var(--text2)" }}>
+                  {p.name} {isMe && "(ти)"}
+                </span>
+                <span style={{ ...S.chip, background: "rgba(252,92,92,0.15)", color: "#fc5c5c", marginLeft: "auto" }}>
+                  {badge}
+                </span>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {!isReady ? (
+        <button className="btn-primary" onClick={onReady}
+          style={{ background: `linear-gradient(135deg,${role.color}cc,${role.color}ee)` }}>
+          ✓ Я готовий
+        </button>
+      ) : (
+        <div style={{ ...S.card, ...S.center, background: "rgba(104,211,145,0.06)", border: "1px solid rgba(104,211,145,0.2)" }}>
+          <p style={{ color: "#68d391", margin: 0, fontWeight: 600 }}>
+            ✓ {waiting > 0 ? `Чекаємо ще ${waiting} гравців...` : "Всі готові!"}
+          </p>
+        </div>
+      )}
+    </div>
+  );
+}
+2. Заміни компонент MafiaActionЦей код фіксує баг з перевіркою Дона та показує візуальний статус нового Дона, якщо старого вбили:JavaScript/* ═══════════════════════════════════════════════
+   МАФІЯ НІЧНІ ДІЇ (MafiaAction)
+═══════════════════════════════════════════════ */
+function MafiaAction({ night, alive, players, playerName, isDecisionMaker, onVote, onConfirm, onDonCheck, donCheckUsed }) {
+  const [donSel, setDonSel] = useState(null);
+  
+  const myPlayer = players.find(p => p.name === playerName);
+  const isOriginalDon = myPlayer?.role === "don"; 
+  
+  // Знаходимо поточного боса (Дон або його спадкоємець)
+  const currentBoss = getDecisionMaker(players);
+  const amIBossNow = currentBoss?.name === playerName;
+
+  const mafiaTeam = alive.filter(p => p.role === "mafia" || p.role === "don");
+  const myVote = night.mafiaVotes?.[playerName];
+  const killConfirmed = night.mafiaTarget != null;
+
+  return (
+    <div style={S.col}>
+      {/* Якщо я спадкоємець і став босом - показуємо статус */}
+      {amIBossNow && !isOriginalDon && (
+        <div style={{ ...S.card, ...S.center, background: "rgba(229,62,62,0.1)", border: "1px solid #e53e3e" }}>
+          <p style={{ color: "#e53e3e", fontWeight: 800, margin: 0 }}>🕴️ Ти — Новий Дон Мафії!</p>
+          <p style={{ ...S.sub, fontSize: "0.8rem" }}>Попередній бос мертвий. Тепер ти приймаєш фінальне рішення.</p>
+        </div>
+      )}
+
+      {/* Team votes */}
+      {mafiaTeam.length > 1 && (
+        <div style={{ ...S.card, background: "rgba(252,92,92,0.07)", border: "1px solid rgba(252,92,92,0.2)" }}>
+          <p style={{ ...S.label, color: "#fc5c5c", margin: "0 0 10px" }}>Голоси команди</p>
+          {mafiaTeam.map(m => {
+            const isThisGuyBoss = currentBoss?.name === m.name;
+            return (
+              <div key={m.name} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "8px 0", borderBottom: "1px solid rgba(252,92,92,0.1)" }}>
+                <span style={{ fontWeight: m.name === playerName ? 700 : 400, color: m.name === playerName ? "var(--text)" : "var(--text2)" }}>
+                  {m.name === playerName ? `${m.name} (ти)` : m.name}
+                  {isThisGuyBoss ? " 🕴️" : ""}
+                </span>
+                <span style={{ color: "#fc5c5c", fontWeight: 600 }}>
+                  {night.mafiaVotes?.[m.name] ? `→ ${night.mafiaVotes[m.name]}` : "⋯"}
+                </span>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {killConfirmed ? (
+        <div style={{ ...S.card, ...S.center, background: "rgba(252,92,92,0.08)", border: "1px solid rgba(252,92,92,0.3)" }}>
+          <p style={{ color: "#fc5c5c", fontWeight: 700, margin: 0 }}>✓ Ціль підтверджена: {night.mafiaTarget}</p>
+        </div>
+      ) : (
+        <>
+          <p style={S.sub}>Обери жертву:</p>
+          <PlayerPicker
+            players={alive} selected={myVote} onSelect={onVote}
+            exclude={mafiaTeam.map(m => m.name)}
+          />
+          {amIBossNow ? (
+            <button className="btn-primary" disabled={!myVote} onClick={onConfirm}
+              style={{ background: myVote ? "linear-gradient(135deg,#c53030,#fc5c5c)" : undefined }}>
+              🔫 Підтвердити вбивство
+            </button>
+          ) : (
+            <p style={{ ...S.sub, textAlign: "center", fontSize: "0.85rem" }}>
+              Чекаємо рішення Дона ({currentBoss?.name})...
+            </p>
+          )}
+        </>
+      )}
+
+      {/* Don special check (Тільки для оригінального Дона) - ФІКС ЗНИКНЕННЯ */}
+      {isOriginalDon && (!donCheckUsed || night.donCheckTarget) && (
+        <div style={{ ...S.card, border: "1px solid rgba(229,62,62,0.25)" }}>
+          <p style={{ ...S.label, color: "#e53e3e", margin: "0 0 10px" }}>🔍 Особлива перевірка (1 раз за гру)</p>
+          {night.donCheckTarget ? (
+            <p style={{ margin: 0, color: "#e53e3e", fontWeight: 600 }}>✓ Перевіряєш: {night.donCheckTarget} (результат вранці)</p>
+          ) : (
+            <>
+              <PlayerPicker players={alive} selected={donSel} onSelect={setDonSel} exclude={[playerName]} />
+              {donSel && (
+                <button onClick={() => onDonCheck(donSel)} style={{
+                  marginTop: 10, width: "100%", padding: "10px", borderRadius: "var(--radius-sm)",
+                  background: "rgba(229,62,62,0.15)", border: "1px solid rgba(229,62,62,0.3)",
+                  color: "#e53e3e", fontSize: "0.9rem", fontWeight: 600, cursor: "pointer", fontFamily: "inherit",
+                }}>
+                  🔍 Перевірити {donSel}
+                </button>
+              )}
+            </>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
