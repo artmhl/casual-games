@@ -42,6 +42,16 @@ const games = [
     tags: ["компанія", "веселощі", "вгадування"],
     component: lazy(() => import("./who-am-i/index.jsx")),
   },
+  {
+    slug: "bunker",
+    title: "Бункер",
+    description: "Катастрофа! Оберіть, хто потрапить у бункер. Ролі, голосування та інтриги в стилі Pass & Play.",
+    emoji: "🏚️",
+    minPlayers: 3,
+    maxPlayers: 5,
+    tags: ["компанія", "ролі", "голосування"],
+    component: lazy(() => import("./bunker/index.jsx")),
+  },
 ];
 
 export default games;
