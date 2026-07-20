@@ -52,6 +52,16 @@ const games = [
     tags: ["компанія", "ролі", "голосування"],
     component: lazy(() => import("./bunker/index.jsx")),
   },
+  {
+    slug: "fake-artist",
+    title: "Фальшивий художник",
+    description: "Один з гравців не знає слова — хто це? Малюйте разом і знайдіть фальшивого художника!",
+    emoji: "🎨",
+    minPlayers: 3,
+    maxPlayers: 8,
+    tags: ["компанія", "блеф", "малювання"],
+    component: lazy(() => import("./fake-artist/index.jsx")),
+  },
 ];
 
 export default games;
