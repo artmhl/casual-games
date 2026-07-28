@@ -31,11 +31,11 @@ export default function HomePage({ games }) {
         to={`/games/${game.slug}`}
         className={`game-card ${hasMultiplayer ? "multiplayer" : ""}`}
       >
-        {badgeText && (
-          <div className={`game-badge ${badgeType}`}>{badgeText}</div>
-        )}
         <span className="game-card-emoji">{game.emoji}</span>
         <div className="game-card-info">
+          {badgeText && (
+            <div className={`game-badge ${badgeType}`}>{badgeText}</div>
+          )}
           <h2 className="game-card-title">{game.title}</h2>
           <p className="game-card-desc">{game.description}</p>
           {(game.minPlayers || game.maxPlayers) && (

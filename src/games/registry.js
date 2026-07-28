@@ -55,11 +55,11 @@ const games = [
         {
                 slug: "bunker",
                 title: "Бункер",
-                description: "Катастрофа! Оберіть, хто потрапить у бункер. Ролі, голосування та інтриги в стилі Pass & Play.",
+                description: "Катастрофа! Оберіть, хто потрапить у бункер. Ролі, голосування та інтриги. Локально або онлайн.",
                 emoji: "🏚️",
                 minPlayers: 3,
                 maxPlayers: 5,
-                tags: ["pass-and-play", "компанія", "ролі", "голосування"],
+                tags: ["мультиплеєр", "pass-and-play", "компанія", "ролі", "голосування"],
                 component: lazy(() => import("./bunker/index.jsx")),
         },
         {
