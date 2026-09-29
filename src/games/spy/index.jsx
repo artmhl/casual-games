@@ -109,6 +109,44 @@ function shuffle(array) {
   return arr;
 }
 
+function getWeightedSpies(players, count) {
+  let weights = JSON.parse(localStorage.getItem("spyWeights") || "{}");
+  
+  players.forEach(p => {
+    if (weights[p] === undefined) weights[p] = 100;
+  });
+
+  let available = [...players];
+  const chosenSpies = [];
+
+  for (let i = 0; i < count; i++) {
+    if (available.length === 0) break;
+    const totalWeight = available.reduce((sum, p) => sum + weights[p], 0);
+    let r = Math.random() * totalWeight;
+    let selected = available[0];
+    for (const p of available) {
+      r -= weights[p];
+      if (r <= 0) {
+        selected = p;
+        break;
+      }
+    }
+    chosenSpies.push(selected);
+    available = available.filter(p => p !== selected);
+  }
+
+  players.forEach(p => {
+    if (chosenSpies.includes(p)) {
+      weights[p] = 20; 
+    } else {
+      weights[p] = Math.min(300, weights[p] + 40);
+    }
+  });
+  localStorage.setItem("spyWeights", JSON.stringify(weights));
+
+  return chosenSpies;
+}
+
 function formatTime(seconds) {
   const m = Math.floor(seconds / 60);
   const s = seconds % 60;
@@ -181,32 +219,29 @@ export default function SpyGame() {
     setActiveCategory(randomCat);
     setActiveWord(randomWord);
 
-    // 2. Розподіляємо ролі
-    let rolesArray = [];
-    const pCount = players.length;
-
-    if (mode === 1) { // 1 шпигун
-      rolesArray = ["spy", ...Array(pCount - 1).fill("civilian")];
-    } else if (mode === 2) { // 1 шпигун + гаджети
-      rolesArray = ["spy", ...Array(pCount - 1).fill("civilian")];
-    } else if (mode === 3) { // 2 шпигуни
-      rolesArray = ["spy", "spy", ...Array(pCount - 2).fill("civilian")];
-    } else if (mode === 4) { // Шпигун + Зрадник
-      rolesArray = ["spy", "traitor", ...Array(pCount - 2).fill("civilian")];
+    // 2. Розподіляємо ролі (Зважена рандомізація)
+    const spyCount = mode === 3 ? 2 : 1;
+    const chosenSpies = getWeightedSpies(players, spyCount);
+    
+    let chosenTraitor = null;
+    if (mode === 4) {
+      const nonSpies = players.filter(p => !chosenSpies.includes(p));
+      chosenTraitor = getRandom(nonSpies);
     }
 
-    rolesArray = shuffle(rolesArray);
+    const finalRoles = players.map(p => {
+      let type = "civilian";
+      if (chosenSpies.includes(p)) type = "spy";
+      else if (p === chosenTraitor) type = "traitor";
 
-    // Додаємо гаджети для режиму 2
-    const finalRoles = rolesArray.map((r, idx) => {
       let gadget = null;
       if (mode === 2) {
-        if (r === "spy") gadget = getRandom(SPY_GADGETS);
+        if (type === "spy") gadget = getRandom(SPY_GADGETS);
         else gadget = getRandom(GADGETS);
       }
       return {
-        name: players[idx],
-        type: r, // "spy", "civilian", "traitor"
+        name: p,
+        type,
         gadget
       };
     });
@@ -293,12 +328,14 @@ export default function SpyGame() {
 function SetupScreen({ players, setPlayers, selectedCats, setSelectedCats, mode, setMode, timerMinutes, setTimerMinutes, onStart }) {
   const [nameInput, setNameInput] = useState("");
   const [showModeInfo, setShowModeInfo] = useState(false);
+  const inputRef = useRef(null);
 
   function addPlayer() {
     const name = nameInput.trim();
     if (!name || players.includes(name)) return;
     setPlayers([...players, name]);
     setNameInput("");
+    setTimeout(() => inputRef.current?.focus(), 0);
   }
   function removePlayer(name) {
     setPlayers(players.filter(p => p !== name));
@@ -342,6 +379,7 @@ function SetupScreen({ players, setPlayers, selectedCats, setSelectedCats, mode,
         </div>
         <div style={{ display: "flex", gap: 8, marginBottom: 12 }}>
           <input
+            ref={inputRef}
             type="text" value={nameInput}
             onChange={(e) => setNameInput(e.target.value)}
             onKeyDown={(e) => e.key === "Enter" && addPlayer()}
@@ -441,8 +479,19 @@ function SetupScreen({ players, setPlayers, selectedCats, setSelectedCats, mode,
                 border: `1px solid ${isSel ? "#3b82f6" : "transparent"}`,
                 borderRadius: "var(--radius-sm)", padding: "12px",
                 cursor: "pointer", display: "flex", alignItems: "center", gap: 12,
-                transition: "all 0.2s"
+                transition: "all 0.2s",
+                position: "relative"
               }}>
+                <div style={{
+                  position: "absolute", top: 8, right: 8,
+                  background: isSel ? "rgba(59,130,246,0.15)" : "rgba(255,255,255,0.05)",
+                  border: `1px solid ${isSel ? "rgba(59,130,246,0.3)" : "rgba(255,255,255,0.1)"}`,
+                  color: isSel ? "#93c5fd" : "var(--text2)",
+                  fontSize: "0.65rem", fontWeight: 600,
+                  padding: "2px 6px", borderRadius: "6px"
+                }}>
+                  {cat.words?.length || 0} слів
+                </div>
                 <div style={{
                   width: 20, height: 20, borderRadius: 4,
                   border: `2px solid ${isSel ? "#3b82f6" : "#4c4c6d"}`,
@@ -452,7 +501,7 @@ function SetupScreen({ players, setPlayers, selectedCats, setSelectedCats, mode,
                   {isSel && <span style={{ color: "#fff", fontSize: "14px" }}>✓</span>}
                 </div>
                 <span style={{ fontSize: "1.4rem" }}>{cat.emoji}</span>
-                <div>
+                <div style={{ flex: 1, paddingRight: 45 }}>
                   <p style={{ fontSize: "0.95rem", fontWeight: 600, color: isSel ? "#fff" : "var(--text)", marginBottom: 2 }}>{cat.name}</p>
                   <p style={{ fontSize: "0.75rem", color: "var(--text2)" }}>{cat.description}</p>
                 </div>
