@@ -569,11 +569,6 @@ function LobbyScreen({ gameState, roomCode, playerName, isHost, onStart, onLeave
       ) : (
         <div style={{ ...S.card, ...S.center }}><p style={S.sub}>⏳ Очікуємо ведучого...</p></div>
       )}
-
-      <button className="btn-secondary" onClick={onLeave}
-        style={{ color: "rgba(252,92,92,0.8)", borderColor: "rgba(252,92,92,0.25)" }}>
-        {isHost ? "🗑 Розпустити кімнату" : "← Вийти з кімнати"}
-      </button>
     </div>
   );
 }
@@ -1382,22 +1377,17 @@ export default function MafiaGame() {
 
   const phase = gameState.phase;
 
-  const showExit = phase !== "lobby";
+  const showExit = true;
 
   return (
     <>
-      {showExit && createPortal(
-        <button onClick={() => {
+      {showExit && document.getElementById("game-header-action") && createPortal(
+        <button className="back-btn" onClick={() => {
           if (window.confirm(isHost ? "Ви дійсно хочете завершити гру для всіх?" : "Ви дійсно хочете покинути гру?")) handleLeave();
-        }} style={{
-          position: "fixed", top: 16, right: 16, zIndex: 99999,
-          background: "rgba(0,0,0,0.6)", border: "1px solid rgba(255,255,255,0.15)",
-          color: "rgba(255,255,255,0.8)", borderRadius: "var(--radius-sm)", padding: "8px 12px",
-          fontSize: "0.85rem", cursor: "pointer", backdropFilter: "blur(4px)",
-        }}>
-          🚪 Вихід
+        }} style={{ color: "#ef4444" }}>
+          {isHost ? "🗑 Розпустити" : "🚪 Вийти"}
         </button>,
-        document.body
+        document.getElementById("game-header-action")
       )}
       {phase === "lobby" && <LobbyScreen gameState={gameState} roomCode={roomCode} playerName={playerName} isHost={isHost} onStart={handleStart} onLeave={handleLeave} />}
       {phase === "role_reveal" && <RoleRevealScreen gameState={gameState} playerName={playerName} onReady={handleReady} />}

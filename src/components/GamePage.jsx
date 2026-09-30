@@ -13,7 +13,7 @@ export default function GamePage({ game }) {
           <span>{game.emoji}</span>
           <span>{game.title}</span>
         </div>
-        <div style={{ width: 64 }} />
+        <div id="game-header-action" style={{ minWidth: 80, display: "flex", justifyContent: "flex-end" }} />
       </header>
 
       <main className="game-main">

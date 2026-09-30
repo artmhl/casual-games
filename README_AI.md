@@ -157,7 +157,8 @@ src/games/registry.js          ← додати запис (як завжди)
 
 ```jsx
 // src/games/<slug>/index.jsx
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
+import { createPortal } from "react-dom";
 import { supabase } from "../../lib/supabase";
 
 function generateCode() {
@@ -179,6 +180,9 @@ export default function MyMultiplayerGame() {
   const [gameState, setGameState]   = useState(null);  // весь стан гри тут
   const [error, setError]           = useState("");
 
+  const stateRef = useRef(null);
+  useEffect(() => { stateRef.current = gameState; }, [gameState]);
+
   // Підписка на зміни кімнати
   useEffect(() => {
     if (!roomCode) return;
@@ -196,10 +200,35 @@ export default function MyMultiplayerGame() {
         { event: "UPDATE", schema: "public", table: "rooms", filter: `code=eq.${roomCode}` },
         (payload) => setGameState(payload.new.state)
       )
+      .on("postgres_changes",
+        { event: "DELETE", schema: "public", table: "rooms", filter: `code=eq.${roomCode}` },
+        () => {
+          alert("Хост розпустив кімнату.");
+          setRoomCode(""); setGameState(null); setPhase("join");
+        }
+      )
       .subscribe();
 
-    return () => supabase.removeChannel(channel);
-  }, [roomCode]);
+    const handleBeforeUnload = () => {
+      if (isHost) {
+        const url = `${import.meta.env.VITE_SUPABASE_URL}/rest/v1/rooms?code=eq.${roomCode}`;
+        fetch(url, {
+          method: "DELETE",
+          headers: {
+            "apikey": import.meta.env.VITE_SUPABASE_ANON_KEY,
+            "Authorization": `Bearer ${import.meta.env.VITE_SUPABASE_ANON_KEY}`
+          },
+          keepalive: true
+        }).catch(() => {});
+      }
+    };
+    window.addEventListener("beforeunload", handleBeforeUnload);
+
+    return () => {
+      supabase.removeChannel(channel);
+      window.removeEventListener("beforeunload", handleBeforeUnload);
+    };
+  }, [roomCode, isHost]);
 
   // Оновити стан — викликай замість прямого setState для синхронізації
   async function updateRoom(newState) {
@@ -243,6 +272,38 @@ export default function MyMultiplayerGame() {
     setPhase("lobby");
   }
 
+  // Вихід з кімнати
+  async function leaveRoom() {
+    if (isHost) {
+      await updateRoom({ ...gameState, phase: "deleted" });
+      await supabase.from("rooms").delete().eq("code", roomCode);
+    } else {
+      const p = gameState.players.filter(x => x.name !== playerName);
+      if (p.length > 0) {
+        await updateRoom({ ...gameState, players: p });
+      }
+    }
+    setRoomCode(""); setGameState(null); setIsHost(false); setPhase("join");
+  }
+
+  // Спостерігаємо за видаленням кімнати хостом
+  useEffect(() => {
+    if (!isHost && gameState?.phase === "deleted") {
+      alert("Хост розпустив кімнату.");
+      setRoomCode(""); setGameState(null); setPhase("join");
+    }
+  }, [gameState?.phase, isHost]);
+
+  // Портал для кнопки виходу у шапці
+  const leavePortal = roomCode && document.getElementById("game-header-action") ? createPortal(
+    <button className="back-btn" onClick={() => {
+      if (window.confirm(isHost ? "Ви дійсно хочете розпустити кімнату?" : "Ви дійсно хочете вийти з кімнати?")) leaveRoom();
+    }} style={{ color: "#ef4444" }}>
+      {isHost ? "🗑 Розпустити" : "🚪 Вийти"}
+    </button>,
+    document.getElementById("game-header-action")
+  ) : null;
+
   // ── Екран підключення ────────────────────────────────────────────────
   if (phase === "join") return (
     <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
@@ -273,6 +334,7 @@ export default function MyMultiplayerGame() {
   // ── Лобі ─────────────────────────────────────────────────────────────
   if (phase === "lobby") return (
     <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+      {leavePortal}
       <div style={{ background: "var(--bg2)", borderRadius: "var(--radius)", padding: 20, textAlign: "center" }}>
         <p style={{ color: "var(--text2)", margin: "0 0 4px", fontSize: 14 }}>Код кімнати — повідом іншим</p>
         <p style={{ color: "var(--accent2)", fontSize: 44, fontWeight: 700, margin: 0, letterSpacing: 8 }}>
@@ -302,11 +364,12 @@ export default function MyMultiplayerGame() {
 
 ### Ключові принципи multiplayer
 
+- **`game-header-action`** — спеціальний `div` у шапці. Використовуй `createPortal`, щоб вбудувати туди кнопку виходу (`leavePortal`).
 - **`gameState`** — єдине джерело правди. Завжди читай з нього, не дублюй у локальному state.
 - **`updateRoom(newState)`** — єдиний спосіб змінити стан. НЕ викликай `setGameState` вручну після нього.
 - **Хост керує фазами** — тільки хост викликає переходи `lobby → play → result`.
 - **Гравці надсилають дії** — наприклад `updateRoom({ ...gameState, votes: { ...gameState.votes, [playerName]: target } })`.
-- **Cleanup** — завжди `return () => supabase.removeChannel(channel)` в useEffect.
+- **Cleanup** — завжди `return () => supabase.removeChannel(channel)` в useEffect. Хост має видаляти кімнату в `beforeunload` та `leaveRoom`.
 
 ### Реєстрація multiplayer-гри (registry.js)
 

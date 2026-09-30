@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from "react";
+import { createPortal } from "react-dom";
 import { supabase } from "../../lib/supabase";
 import content from "./content.json";
 
@@ -132,6 +133,8 @@ export default function BunkerMultiplayer() {
   const [isHost, setIsHost] = useState(false);
   const [gameState, setGameState] = useState(null);
   const [error, setError] = useState("");
+
+  const headerActionEl = document.getElementById("game-header-action");
 
   // Підписка
   useEffect(() => {
@@ -415,6 +418,7 @@ export default function BunkerMultiplayer() {
     const canStart = gameState.players.length >= 3 && gameState.players.length <= 5;
     return (
       <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+        <LeaveButtonPortal isHost={isHost} leaveRoom={leaveRoom} />
         <div style={{ background: "var(--bg2)", borderRadius: "var(--radius)", padding: 20, textAlign: "center" }}>
           <p style={{ color: "var(--text2)", margin: "0 0 4px", fontSize: 14 }}>Код кімнати — повідом іншим</p>
           <p style={{ color: "var(--accent2)", fontSize: 44, fontWeight: 700, margin: 0, letterSpacing: 8 }}>
@@ -470,14 +474,6 @@ export default function BunkerMultiplayer() {
         )}
 
         <div style={{ display: "flex", flexDirection: "column", gap: 12, marginTop: 8 }}>
-          <button 
-            className="btn-secondary"
-            onClick={leaveRoom} 
-            style={{ color: "rgba(252,92,92,0.8)", borderColor: "rgba(252,92,92,0.25)", marginTop: 8 }}
-          >
-            {isHost ? "🗑 Розпустити кімнату" : "← Вийти з кімнати"}
-          </button>
-
           {isHost ? (
             <button className="btn-primary" onClick={handleStart} disabled={!canStart}>
               {canStart ? "Почати гру" : "Очікування гравців (мін 3)..."}
@@ -495,28 +491,7 @@ export default function BunkerMultiplayer() {
     const cat = gameState.catastrophe;
     return (
       <div style={{ display: "flex", flexDirection: "column", gap: 24, position: "relative" }}>
-        {/* Фіксована кнопка виходу під час гри */}
-        <button
-          onClick={leaveRoom}
-          style={{
-            position: "fixed",
-            top: 16,
-            right: 16,
-            background: "rgba(252, 92, 92, 0.1)",
-            border: "1px solid rgba(252, 92, 92, 0.25)",
-            color: "rgba(252, 92, 92, 0.9)",
-            borderRadius: "var(--radius-sm)",
-            padding: "8px 12px",
-            fontSize: "0.9rem",
-            fontWeight: 600,
-            cursor: "pointer",
-            zIndex: 100,
-            backdropFilter: "blur(4px)"
-          }}
-        >
-          {isHost ? "🗑 Розпустити" : "← Вийти"}
-        </button>
-
+        <LeaveButtonPortal isHost={isHost} leaveRoom={leaveRoom} />
         <div style={{ textAlign: "center" }}>
           <div style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", width: 72, height: 72, borderRadius: "50%", background: "linear-gradient(135deg,#ef4444,#f97316)", fontSize: "2rem", marginBottom: 16, boxShadow: "0 0 40px rgba(239,68,68,0.4)" }}>
             {cat.emoji}
@@ -557,10 +532,7 @@ export default function BunkerMultiplayer() {
 
     return (
       <div style={{ display: "flex", flexDirection: "column", gap: 20, position: "relative" }}>
-        <button onClick={leaveRoom} style={{ position: "fixed", top: 16, right: 16, background: "rgba(252, 92, 92, 0.1)", border: "1px solid rgba(252, 92, 92, 0.25)", color: "rgba(252, 92, 92, 0.9)", borderRadius: "var(--radius-sm)", padding: "8px 12px", fontSize: "0.9rem", fontWeight: 600, cursor: "pointer", zIndex: 100, backdropFilter: "blur(4px)" }}>
-          {isHost ? "🗑 Розпустити" : "← Вийти"}
-        </button>
-
+        <LeaveButtonPortal isHost={isHost} leaveRoom={leaveRoom} />
         <div style={{ textAlign: "center" }}>
             <div style={{ display: "inline-block", background: "linear-gradient(135deg,var(--accent),var(--accent2))", borderRadius: "50%", width: 56, height: 56, lineHeight: "56px", fontSize: "1.5rem", marginBottom: 10 }}>🎭</div>
             <h2 style={{ fontSize: "1.5rem", fontWeight: 800 }}>Твоя роль</h2>
@@ -603,9 +575,7 @@ export default function BunkerMultiplayer() {
 
     return (
       <div style={{ display: "flex", flexDirection: "column", gap: 24, position: "relative" }}>
-        <button onClick={leaveRoom} style={{ position: "fixed", top: 16, right: 16, background: "rgba(252, 92, 92, 0.1)", border: "1px solid rgba(252, 92, 92, 0.25)", color: "rgba(252, 92, 92, 0.9)", borderRadius: "var(--radius-sm)", padding: "8px 12px", fontSize: "0.9rem", fontWeight: 600, cursor: "pointer", zIndex: 100, backdropFilter: "blur(4px)" }}>
-          {isHost ? "🗑 Розпустити" : "← Вийти"}
-        </button>
+        <LeaveButtonPortal isHost={isHost} leaveRoom={leaveRoom} />
 
         <div style={{ textAlign: "center" }}>
           <div style={{ fontSize: "2.5rem", marginBottom: 10 }}>💬</div>
@@ -666,10 +636,7 @@ export default function BunkerMultiplayer() {
 
     return (
       <div style={{ display: "flex", flexDirection: "column", gap: 20, position: "relative" }}>
-        <button onClick={leaveRoom} style={{ position: "fixed", top: 16, right: 16, background: "rgba(252, 92, 92, 0.1)", border: "1px solid rgba(252, 92, 92, 0.25)", color: "rgba(252, 92, 92, 0.9)", borderRadius: "var(--radius-sm)", padding: "8px 12px", fontSize: "0.9rem", fontWeight: 600, cursor: "pointer", zIndex: 100, backdropFilter: "blur(4px)" }}>
-          {isHost ? "🗑 Розпустити" : "← Вийти"}
-        </button>
-
+        <LeaveButtonPortal isHost={isHost} leaveRoom={leaveRoom} />
         <div style={{ textAlign: "center" }}>
             <h2 style={{ fontSize: "1.3rem", fontWeight: 800, marginBottom: 6 }}>
               Обери кого вигнати
@@ -743,9 +710,7 @@ export default function BunkerMultiplayer() {
 
     return (
         <div style={{ display: "flex", flexDirection: "column", gap: 24, position: "relative" }}>
-          <button onClick={leaveRoom} style={{ position: "fixed", top: 16, right: 16, background: "rgba(252, 92, 92, 0.1)", border: "1px solid rgba(252, 92, 92, 0.25)", color: "rgba(252, 92, 92, 0.9)", borderRadius: "var(--radius-sm)", padding: "8px 12px", fontSize: "0.9rem", fontWeight: 600, cursor: "pointer", zIndex: 100, backdropFilter: "blur(4px)" }}>
-            {isHost ? "🗑 Розпустити" : "← Вийти"}
-          </button>
+          <LeaveButtonPortal isHost={isHost} leaveRoom={leaveRoom} />
 
           <div style={{ textAlign: "center", background: "linear-gradient(135deg,rgba(239,68,68,0.15),rgba(249,115,22,0.15))", borderRadius: "var(--radius)", border: "1px solid rgba(239,68,68,0.3)", padding: "28px 20px" }}>
             <div style={{ fontSize: "3rem", marginBottom: 10 }}>☠️</div>
@@ -818,4 +783,17 @@ export default function BunkerMultiplayer() {
   }
   
   return null;
+}
+
+function LeaveButtonPortal({ isHost, leaveRoom }) {
+  const headerActionEl = document.getElementById("game-header-action");
+  if (!headerActionEl) return null;
+  return createPortal(
+    <button className="back-btn" onClick={() => {
+      if (window.confirm(isHost ? "Ви дійсно хочете розпустити кімнату?" : "Ви дійсно хочете вийти з кімнати?")) leaveRoom();
+    }} style={{ color: "#ef4444" }}>
+      {isHost ? "🗑 Розпустити" : "🚪 Вийти"}
+    </button>,
+    headerActionEl
+  );
 }
