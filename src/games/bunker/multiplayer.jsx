@@ -149,7 +149,17 @@ export default function BunkerMultiplayer() {
       .on(
         "postgres_changes",
         { event: "UPDATE", schema: "public", table: "rooms", filter: `code=eq.${roomCode}` },
-        (payload) => setGameState(payload.new.state)
+        (payload) => {
+          if (payload.new?.state?.phase === "deleted") {
+            setError("Ведучий покинув гру, кімнату закрито.");
+            setPhase("join");
+            setRoomCode("");
+            setGameState(null);
+            setIsHost(false);
+          } else {
+            setGameState(payload.new.state);
+          }
+        }
       )
       .on(
         "postgres_changes",
@@ -186,22 +196,41 @@ export default function BunkerMultiplayer() {
     }
   }, [isHost, phase, roomCode, gameState?.phase]);
 
+  // Очищення кімнати при закритті вкладки (тільки для хоста)
+  useEffect(() => {
+    if (!isHost || !roomCode) return;
+    const handleBeforeUnload = () => {
+      const url = `${import.meta.env.VITE_SUPABASE_URL}/rest/v1/rooms?code=eq.${roomCode}`;
+      fetch(url, {
+        method: "DELETE",
+        headers: {
+          "apikey": import.meta.env.VITE_SUPABASE_ANON_KEY,
+          "Authorization": `Bearer ${import.meta.env.VITE_SUPABASE_ANON_KEY}`
+        },
+        keepalive: true
+      }).catch(() => {});
+    };
+    window.addEventListener("beforeunload", handleBeforeUnload);
+    return () => window.removeEventListener("beforeunload", handleBeforeUnload);
+  }, [isHost, roomCode]);
+
   // Завершення гри, якщо залишається один ведучий (і не в лобі)
   useEffect(() => {
-    if (gameState && phase !== "lobby" && phase !== "join") {
+    if (gameState && gameState.phase !== "lobby") {
       if (gameState.players.length <= 1) {
         setError("Всі гравці вийшли. Гра завершена.");
         if (isHost) {
-          supabase.from("rooms").delete().eq("code", roomCode);
+          supabase.from("rooms").update({ state: { phase: "deleted" } }).eq("code", roomCode).then(() => {
+            supabase.from("rooms").delete().eq("code", roomCode);
+          });
         }
-        // DELETE евент викине всіх інших, але для надійності:
         setPhase("join");
         setRoomCode("");
         setGameState(null);
         setIsHost(false);
       }
     }
-  }, [gameState?.players?.length, phase, isHost, roomCode, gameState]);
+  }, [gameState?.players?.length, gameState?.phase, isHost, roomCode]);
 
   async function updateRoom(newState) {
     if (!roomCode) return;
@@ -264,6 +293,7 @@ export default function BunkerMultiplayer() {
     if (!roomCode) return;
     
     if (isHost) {
+      await supabase.from("rooms").update({ state: { phase: "deleted" } }).eq("code", roomCode);
       await supabase.from("rooms").delete().eq("code", roomCode);
     } else {
       if (gameState) {
@@ -276,10 +306,11 @@ export default function BunkerMultiplayer() {
         const newState = { ...gameState, players: newPlayers, readyPlayers: newReady, roles: newRoles, votes: newVotes };
         await updateRoom(newState);
       }
-      setPhase("join");
-      setRoomCode("");
-      setGameState(null);
     }
+    setPhase("join");
+    setRoomCode("");
+    setGameState(null);
+    setIsHost(false);
   }
 
   // ─── ДІЇ ХОСТА ─────────────────────────────────────────────────────────────
@@ -440,19 +471,11 @@ export default function BunkerMultiplayer() {
 
         <div style={{ display: "flex", flexDirection: "column", gap: 12, marginTop: 8 }}>
           <button 
+            className="btn-secondary"
             onClick={leaveRoom} 
-            style={{ 
-              background: "transparent", 
-              border: "1px solid #ef4444", 
-              color: "#ef4444", 
-              borderRadius: "var(--radius)", 
-              padding: "16px", 
-              fontWeight: 600, 
-              cursor: "pointer",
-              fontSize: "1rem"
-            }}
+            style={{ color: "rgba(252,92,92,0.8)", borderColor: "rgba(252,92,92,0.25)", marginTop: 8 }}
           >
-              Вийти з кімнати
+            {isHost ? "🗑 Розпустити кімнату" : "← Вийти з кімнати"}
           </button>
 
           {isHost ? (
@@ -479,22 +502,19 @@ export default function BunkerMultiplayer() {
             position: "fixed",
             top: 16,
             right: 16,
-            background: "rgba(239, 68, 68, 0.2)",
-            border: "1px solid rgba(239, 68, 68, 0.5)",
-            color: "#f87171",
+            background: "rgba(252, 92, 92, 0.1)",
+            border: "1px solid rgba(252, 92, 92, 0.25)",
+            color: "rgba(252, 92, 92, 0.9)",
             borderRadius: "var(--radius-sm)",
             padding: "8px 12px",
             fontSize: "0.9rem",
             fontWeight: 600,
             cursor: "pointer",
             zIndex: 100,
-            backdropFilter: "blur(4px)",
-            display: "flex",
-            alignItems: "center",
-            gap: 6
+            backdropFilter: "blur(4px)"
           }}
         >
-          <span>🚪</span> Вихід
+          {isHost ? "🗑 Розпустити" : "← Вийти"}
         </button>
 
         <div style={{ textAlign: "center" }}>
@@ -537,8 +557,8 @@ export default function BunkerMultiplayer() {
 
     return (
       <div style={{ display: "flex", flexDirection: "column", gap: 20, position: "relative" }}>
-        <button onClick={leaveRoom} style={{ position: "fixed", top: 16, right: 16, background: "rgba(239, 68, 68, 0.2)", border: "1px solid rgba(239, 68, 68, 0.5)", color: "#f87171", borderRadius: "var(--radius-sm)", padding: "8px 12px", fontSize: "0.9rem", fontWeight: 600, cursor: "pointer", zIndex: 100, backdropFilter: "blur(4px)", display: "flex", alignItems: "center", gap: 6 }}>
-          <span>🚪</span> Вихід
+        <button onClick={leaveRoom} style={{ position: "fixed", top: 16, right: 16, background: "rgba(252, 92, 92, 0.1)", border: "1px solid rgba(252, 92, 92, 0.25)", color: "rgba(252, 92, 92, 0.9)", borderRadius: "var(--radius-sm)", padding: "8px 12px", fontSize: "0.9rem", fontWeight: 600, cursor: "pointer", zIndex: 100, backdropFilter: "blur(4px)" }}>
+          {isHost ? "🗑 Розпустити" : "← Вийти"}
         </button>
 
         <div style={{ textAlign: "center" }}>
@@ -583,8 +603,8 @@ export default function BunkerMultiplayer() {
 
     return (
       <div style={{ display: "flex", flexDirection: "column", gap: 24, position: "relative" }}>
-        <button onClick={leaveRoom} style={{ position: "fixed", top: 16, right: 16, background: "rgba(239, 68, 68, 0.2)", border: "1px solid rgba(239, 68, 68, 0.5)", color: "#f87171", borderRadius: "var(--radius-sm)", padding: "8px 12px", fontSize: "0.9rem", fontWeight: 600, cursor: "pointer", zIndex: 100, backdropFilter: "blur(4px)", display: "flex", alignItems: "center", gap: 6 }}>
-          <span>🚪</span> Вихід
+        <button onClick={leaveRoom} style={{ position: "fixed", top: 16, right: 16, background: "rgba(252, 92, 92, 0.1)", border: "1px solid rgba(252, 92, 92, 0.25)", color: "rgba(252, 92, 92, 0.9)", borderRadius: "var(--radius-sm)", padding: "8px 12px", fontSize: "0.9rem", fontWeight: 600, cursor: "pointer", zIndex: 100, backdropFilter: "blur(4px)" }}>
+          {isHost ? "🗑 Розпустити" : "← Вийти"}
         </button>
 
         <div style={{ textAlign: "center" }}>
@@ -646,8 +666,8 @@ export default function BunkerMultiplayer() {
 
     return (
       <div style={{ display: "flex", flexDirection: "column", gap: 20, position: "relative" }}>
-        <button onClick={leaveRoom} style={{ position: "fixed", top: 16, right: 16, background: "rgba(239, 68, 68, 0.2)", border: "1px solid rgba(239, 68, 68, 0.5)", color: "#f87171", borderRadius: "var(--radius-sm)", padding: "8px 12px", fontSize: "0.9rem", fontWeight: 600, cursor: "pointer", zIndex: 100, backdropFilter: "blur(4px)", display: "flex", alignItems: "center", gap: 6 }}>
-          <span>🚪</span> Вихід
+        <button onClick={leaveRoom} style={{ position: "fixed", top: 16, right: 16, background: "rgba(252, 92, 92, 0.1)", border: "1px solid rgba(252, 92, 92, 0.25)", color: "rgba(252, 92, 92, 0.9)", borderRadius: "var(--radius-sm)", padding: "8px 12px", fontSize: "0.9rem", fontWeight: 600, cursor: "pointer", zIndex: 100, backdropFilter: "blur(4px)" }}>
+          {isHost ? "🗑 Розпустити" : "← Вийти"}
         </button>
 
         <div style={{ textAlign: "center" }}>
@@ -723,8 +743,8 @@ export default function BunkerMultiplayer() {
 
     return (
         <div style={{ display: "flex", flexDirection: "column", gap: 24, position: "relative" }}>
-          <button onClick={leaveRoom} style={{ position: "fixed", top: 16, right: 16, background: "rgba(239, 68, 68, 0.2)", border: "1px solid rgba(239, 68, 68, 0.5)", color: "#f87171", borderRadius: "var(--radius-sm)", padding: "8px 12px", fontSize: "0.9rem", fontWeight: 600, cursor: "pointer", zIndex: 100, backdropFilter: "blur(4px)", display: "flex", alignItems: "center", gap: 6 }}>
-            <span>🚪</span> Вихід
+          <button onClick={leaveRoom} style={{ position: "fixed", top: 16, right: 16, background: "rgba(252, 92, 92, 0.1)", border: "1px solid rgba(252, 92, 92, 0.25)", color: "rgba(252, 92, 92, 0.9)", borderRadius: "var(--radius-sm)", padding: "8px 12px", fontSize: "0.9rem", fontWeight: 600, cursor: "pointer", zIndex: 100, backdropFilter: "blur(4px)" }}>
+            {isHost ? "🗑 Розпустити" : "← Вийти"}
           </button>
 
           <div style={{ textAlign: "center", background: "linear-gradient(135deg,rgba(239,68,68,0.15),rgba(249,115,22,0.15))", borderRadius: "var(--radius)", border: "1px solid rgba(239,68,68,0.3)", padding: "28px 20px" }}>
