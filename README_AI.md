@@ -19,6 +19,7 @@
 ## Структура проєкту
 
 ```text
+vercel.json              ← SPA rewrite для Vercel (НЕ ЧІПАТИ)
 src/
   games/
     registry.js          ← єдиний файл реєстрації ігор (додавати сюди)
@@ -29,12 +30,13 @@ src/
       content.json       ← (опціонально) великі масиви даних (10+ елементів)
   lib/
     supabase.js          ← готовий Supabase-клієнт (НЕ ЧІПАТИ)
+    roomSession.js       ← платформне збереження сесії + очищення старих кімнат (НЕ ЧІПАТИ)
   components/            ← ядро порталу: HomePage, GamePage, LoadingScreen, NotFound (НЕ ЧІПАТИ)
   index.css              ← глобальні стилі та CSS-змінні (НЕ ЧІПАТИ)
   App.jsx                ← авто-роутинг з registry.js (НЕ ЧІПАТИ)
 ```
 
-**Головне правило:** працюй виключно у `src/games/<slug>/` та `src/games/registry.js`. Не змінюй файли в `src/components/`, `src/lib/`, `src/App.jsx`, `src/index.css` і не імпортуй код з інших ігор.
+**Головне правило:** працюй виключно у `src/games/<slug>/` та `src/games/registry.js`. Не змінюй файли в `src/components/`, `src/lib/`, `src/App.jsx`, `src/index.css`, `vercel.json` і не імпортуй код з інших ігор.
 
 **Маршрути:** `/` — головна сторінка ([HomePage.jsx](src/components/HomePage.jsx)), `/games/<slug>` — сторінка гри ([GamePage.jsx](src/components/GamePage.jsx)).
 
@@ -63,12 +65,12 @@ src/
 
 ```js
 {
-  slug: "my-game",                         // збігається з назвою папки src/games/my-game
-  title: "Назва гри",                      // українською
+  slug: "my-game",                             // збігається з назвою папки src/games/my-game
+  title: "Назва гри",                          // українською
   description: "Короткий опис в 1–2 речення.",
-  emoji: "🎮",                              // один емодзі
-  minPlayers: 3,                           // опціонально
-  maxPlayers: 10,                          // опціонально
+  emoji: "🎮",                                  // один емодзі
+  minPlayers: 3,                               // опціонально
+  maxPlayers: 10,                              // опціонально
   tags: ["pass-and-play", "компанія", "блеф"], // системний тег + 1–3 описові
   component: lazy(() => import("./my-game/index.jsx")),
 }
@@ -157,41 +159,67 @@ const { locations, questions } = content;
 
 ---
 
-## 2. МУЛЬТИПЛЕЄРНА ГРА (Supabase Realtime)
+## 2. МУЛЬТИПЛЕЄРНА ГРА (Supabase Realtime + Стійкі сесії)
 
 Використовуй, коли **кожен гравець грає на власному пристрої**.
-Портал хоститься на Vercel, бекенд-синхронізація працює через спільну таблицю `rooms` у Supabase.
+Портал хоститься на Vercel, синхронізація працює через спільну таблицю `rooms` у Supabase.
 
 **Принцип роботи:**
 ```text
 Хост    → створює кімнату (insert у rooms) → отримує 4-символьний код "MAFK"
 Гравці  → вводять "MAFK" → підписуються на Realtime-зміни рядка (~100ms затримка)
 Дія     → updateRoom(newState) → Supabase розсилає новий state усім гравцям
-Вихід   → хост видаляє рядок (DELETE) → усім прилітає подія і повертає їх на екран входу
+Релоад  → loadRoomSession(GAME_SLUG) автоматично повертає хоста/гравця у поточну фазу
+Вихід   → хост тисне «🗑 Розпустити» (DELETE) → усім прилітає подія і повертає їх на екран входу
+```
+
+### Платформний модуль сесій (`src/lib/roomSession.js`)
+
+Усі мультиплеєрні ігри використовують готовий модуль `src/lib/roomSession.js` (зберігає сесію в `localStorage` із автоматичним резервом у `cookie`, щоб надійно працювати на смартфонах):
+
+```js
+import {
+  saveRoomSession,    // saveRoomSession(GAME_SLUG, { roomCode, playerName })
+  loadRoomSession,    // loadRoomSession(GAME_SLUG) → { roomCode, playerName, savedAt } | null
+  clearRoomSession,   // clearRoomSession(GAME_SLUG)
+  cleanupStaleRooms,  // cleanupStaleRooms(supabase, GAME_SLUG) — прибирає покинуті кімнати > 2 год
+} from "../../lib/roomSession";
 ```
 
 ### Файли
 
 ```text
-src/games/<slug>/index.jsx     ← створити (імпортує supabase з "../../lib/supabase")
+src/games/<slug>/index.jsx     ← створити (імпортує supabase і roomSession)
 src/games/<slug>/content.json  ← опціонально
 src/games/registry.js          ← додати запис із тегом "мультиплеєр"
 ```
 
 ### Еталонний шаблон `index.jsx` для multiplayer
 
-Цей шаблон вже враховує всі вимоги платформи: єдиний стиль кнопки виходу через портал, захист від змішування кімнат різних ігор (`game: GAME_SLUG`), коректне очищення кімнати в БД, автовидалення неактивного лобі, захист від зависання коли всі гравці вийшли, та сумісність із React `StrictMode` і `oxlint`.
+Шаблон забезпечує:
+- автоматичне відновлення сесії хоста і гравців після F5 / перезавантаження / згортання браузера на смартфоні;
+- стійкість до тимчасових обривів мережі (`PGRST116` vs мережева помилка, автоперепідключення WebSocket + резервний polling + `visibilitychange`/`online`/`pageshow`);
+- прибирання старих кімнат без `beforeunload` `DELETE` (щоб оновлення сторінки хостом не вбивало кімнату);
+- єдину кнопку виходу через портал у `#game-header-action`;
+- чисту сумісність із React `StrictMode` і `oxlint` (0 помилок, 0 попереджень).
 
 ```jsx
 // src/games/<slug>/index.jsx
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import { createPortal } from "react-dom";
 import { supabase } from "../../lib/supabase";
+import {
+  saveRoomSession,
+  loadRoomSession,
+  clearRoomSession,
+  cleanupStaleRooms,
+} from "../../lib/roomSession";
 
 const GAME_SLUG = "my-game"; // ОБОВ'ЯЗКОВО збігається зі slug у registry.js
 const MIN_PLAYERS = 3;
 const MAX_PLAYERS = 10;
-const LOBBY_TTL_MS = 5 * 60 * 1000; // 5 хв автовидалення покинутого лобі
+const LOBBY_TTL_MS = 10 * 60 * 1000; // 10 хв очікування в лобі
+const HEARTBEAT_MS = 5 * 60 * 1000;  // 5 хв оновлення updated_at активної гри
 
 function generateCode() {
   return Math.random().toString(36).slice(2, 6).toUpperCase();
@@ -209,96 +237,218 @@ const inputStyle = {
 };
 
 export default function MyMultiplayerGame() {
-  const [roomCode, setRoomCode]     = useState("");
-  const [codeInput, setCodeInput]   = useState("");
-  const [playerName, setPlayerName] = useState("");
-  const [gameState, setGameState]   = useState(null); // єдине джерело правди (включно з phase)
-  const [error, setError]           = useState("");
+  const [savedSession] = useState(() => loadRoomSession(GAME_SLUG));
+  const [roomCode, setRoomCode]         = useState(() => savedSession?.roomCode || "");
+  const [codeInput, setCodeInput]       = useState("");
+  const [playerName, setPlayerName]     = useState(() => savedSession?.playerName || "");
+  const [gameState, setGameState]       = useState(null); // єдине джерело правди (включно з phase)
+  const [error, setError]               = useState("");
+  const [connStatus, setConnStatus]     = useState(() =>
+    typeof navigator !== "undefined" && !navigator.onLine ? "offline" : "connected"
+  );
+  const [reconnectTick, setReconnectTick] = useState(0);
 
-  // Визначаємо хоста прямо з gameState — без розсинхронізації
+  const hiddenAtRef = useRef(null);
+  const connStatusRef = useRef(connStatus);
+  useEffect(() => {
+    connStatusRef.current = connStatus;
+  }, [connStatus]);
+
+  // Хост завжди визначається з gameState — стабільно після будь-якого перезавантаження
   const isHost = Boolean(gameState && gameState.host === playerName);
 
   const resetLocalRoom = useCallback((message = "") => {
+    clearRoomSession(GAME_SLUG);
     setRoomCode("");
     setGameState(null);
+    setConnStatus(typeof navigator !== "undefined" && !navigator.onLine ? "offline" : "connected");
     setError(message);
   }, []);
 
-  // ── 1. Підписка на кімнату (UPDATE + DELETE) ─────────────────────────
+  // Синхронізація актуального стану кімнати з БД
+  const syncRoom = useCallback(async () => {
+    if (!roomCode) return;
+    if (typeof navigator !== "undefined" && !navigator.onLine) {
+      setConnStatus("offline");
+      return;
+    }
+
+    try {
+      const { data, error: fetchError } = await supabase
+        .from("rooms")
+        .select("state")
+        .eq("code", roomCode)
+        .eq("game", GAME_SLUG)
+        .single();
+
+      if (fetchError) {
+        // PGRST116 = рядка немає в БД (кімнату закрито).
+        // Мережева помилка НЕ скидає сесію — чекаємо відновлення зв'язку.
+        if (fetchError.code === "PGRST116") {
+          resetLocalRoom("Кімнату закрито або час очікування вийшов.");
+        } else {
+          setConnStatus("reconnecting");
+        }
+        return;
+      }
+
+      if (!data?.state || data.state.phase === "deleted") {
+        resetLocalRoom("Хост розпустив кімнату.");
+        return;
+      }
+
+      if (!data.state.players?.some((p) => p.name === playerName)) {
+        resetLocalRoom("Тебе немає у списку гравців цієї кімнати.");
+        return;
+      }
+
+      setGameState(data.state);
+      setConnStatus("connected");
+    } catch {
+      setConnStatus(typeof navigator !== "undefined" && !navigator.onLine ? "offline" : "reconnecting");
+    }
+  }, [roomCode, playerName, resetLocalRoom]);
+
+  // Зберігаємо сесію, поки гравець у кімнаті
+  useEffect(() => {
+    if (roomCode && playerName) {
+      saveRoomSession(GAME_SLUG, { roomCode, playerName });
+    }
+  }, [roomCode, playerName]);
+
+  // ── 1. Підписка на Realtime з автоперепідключенням ───────────────────
   useEffect(() => {
     if (!roomCode) return;
 
-    supabase
-      .from("rooms")
-      .select("state")
-      .eq("code", roomCode)
-      .eq("game", GAME_SLUG)
-      .single()
-      .then(({ data, error: fetchError }) => {
-        if (fetchError || !data?.state) {
-          resetLocalRoom("Кімнату не знайдено або її вже закрито.");
-          return;
-        }
-        setGameState(data.state);
-      });
+    let isActive = true;
+    let retryTimer = null;
+
+    syncRoom();
 
     const channel = supabase
-      .channel(`${GAME_SLUG}:${roomCode}`)
+      .channel(`${GAME_SLUG}:${roomCode}:${reconnectTick}`)
       .on(
         "postgres_changes",
         { event: "*", schema: "public", table: "rooms", filter: `code=eq.${roomCode}` },
         (payload) => {
+          if (!isActive) return;
+
           if (
             payload.eventType === "DELETE" ||
             (payload.eventType === "UPDATE" && payload.new?.state?.phase === "deleted")
           ) {
             resetLocalRoom("Хост розпустив кімнату.");
-          } else if (payload.eventType === "UPDATE" && payload.new?.state) {
+            return;
+          }
+
+          if (payload.eventType === "UPDATE" && payload.new?.state) {
             setGameState(payload.new.state);
+            setConnStatus("connected");
           }
         }
       )
-      .subscribe();
+      .subscribe((status) => {
+        if (!isActive) return;
+        if (status === "SUBSCRIBED") {
+          setConnStatus("connected");
+          syncRoom();
+        } else if (status === "CHANNEL_ERROR" || status === "TIMED_OUT" || status === "CLOSED") {
+          setConnStatus(typeof navigator !== "undefined" && !navigator.onLine ? "offline" : "reconnecting");
+          if (typeof navigator === "undefined" || navigator.onLine) {
+            clearTimeout(retryTimer);
+            retryTimer = setTimeout(() => {
+              if (isActive) setReconnectTick((t) => t + 1);
+            }, 3000);
+          }
+        }
+      });
 
     return () => {
+      isActive = false;
+      clearTimeout(retryTimer);
       supabase.removeChannel(channel);
     };
-  }, [roomCode, resetLocalRoom]);
+  }, [roomCode, reconnectTick, syncRoom, resetLocalRoom]);
 
-  // ── 2. Очищення кімнати при закритті вкладки хостом (desktop) ────────
+  // ── 2. Стійкість на смартфонах (згортання, блокування, мережа, iOS bfcache) ──
   useEffect(() => {
-    if (!isHost || !roomCode) return;
+    if (!roomCode) return;
 
-    const handleBeforeUnload = () => {
-      const url = `${import.meta.env.VITE_SUPABASE_URL}/rest/v1/rooms?code=eq.${roomCode}`;
-      fetch(url, {
-        method: "DELETE",
-        headers: {
-          apikey: import.meta.env.VITE_SUPABASE_ANON_KEY,
-          Authorization: `Bearer ${import.meta.env.VITE_SUPABASE_ANON_KEY}`,
-        },
-        keepalive: true,
-      }).catch(() => {});
+    const handleVisibility = () => {
+      if (document.visibilityState === "hidden") {
+        hiddenAtRef.current = Date.now();
+        return;
+      }
+      const awayMs = hiddenAtRef.current ? Date.now() - hiddenAtRef.current : 0;
+      hiddenAtRef.current = null;
+      syncRoom();
+      if (awayMs > 15000 || connStatusRef.current !== "connected") {
+        setReconnectTick((t) => t + 1);
+      }
     };
 
-    window.addEventListener("beforeunload", handleBeforeUnload);
-    return () => window.removeEventListener("beforeunload", handleBeforeUnload);
-  }, [isHost, roomCode]);
+    const handleOnline = () => {
+      setConnStatus("reconnecting");
+      syncRoom();
+      setReconnectTick((t) => t + 1);
+    };
 
-  // ── 3. Автовидалення неактивного лобі через 5 хв (хост) ──────────────
+    const handleOffline = () => setConnStatus("offline");
+
+    const handlePageShow = (event) => {
+      if (event.persisted) {
+        syncRoom();
+        setReconnectTick((t) => t + 1);
+      }
+    };
+
+    document.addEventListener("visibilitychange", handleVisibility);
+    window.addEventListener("online", handleOnline);
+    window.addEventListener("offline", handleOffline);
+    window.addEventListener("pageshow", handlePageShow);
+
+    return () => {
+      document.removeEventListener("visibilitychange", handleVisibility);
+      window.removeEventListener("online", handleOnline);
+      window.removeEventListener("offline", handleOffline);
+      window.removeEventListener("pageshow", handlePageShow);
+    };
+  }, [roomCode, syncRoom]);
+
+  // ── 3. Резервний polling, поки WebSocket перепідключається ───────────
+  useEffect(() => {
+    if (!roomCode || connStatus === "connected") return;
+    const pollId = setInterval(() => {
+      if (document.visibilityState === "visible" && navigator.onLine) syncRoom();
+    }, 5000);
+    return () => clearInterval(pollId);
+  }, [roomCode, connStatus, syncRoom]);
+
+  // ── 4. Автовидалення неактивного лобі за серверним часом (хост) ──────
   useEffect(() => {
     if (!isHost || !roomCode || gameState?.phase !== "lobby") return;
-
+    const expiresAt = gameState.lobbyExpiresAt || Date.now() + LOBBY_TTL_MS;
+    const remainingMs = Math.max(0, expiresAt - Date.now());
     const timerId = setTimeout(() => {
       supabase.from("rooms").delete().eq("code", roomCode).then(() => {
-        resetLocalRoom("Час очікування в лобі вийшов (5 хв). Кімнату видалено.");
+        resetLocalRoom("Час очікування в лобі вийшов. Кімнату видалено.");
       });
-    }, LOBBY_TTL_MS);
-
+    }, remainingMs);
     return () => clearTimeout(timerId);
-  }, [isHost, roomCode, gameState?.phase, resetLocalRoom]);
+  }, [isHost, roomCode, gameState?.phase, gameState?.lobbyExpiresAt, resetLocalRoom]);
 
-  // ── 4. Автозавершення гри, якщо всі гравці вийшли і лишився 1 ────────
+  // ── 5. Heartbeat хоста (підтримка updated_at для довгих ігор) ────────
+  useEffect(() => {
+    if (!isHost || !roomCode) return;
+    const id = setInterval(() => {
+      if (document.visibilityState === "visible" && navigator.onLine) {
+        supabase.from("rooms").update({ updated_at: new Date().toISOString() }).eq("code", roomCode).then(() => {});
+      }
+    }, HEARTBEAT_MS);
+    return () => clearInterval(id);
+  }, [isHost, roomCode]);
+
+  // ── 6. Автозавершення гри, якщо всі гравці вийшли і лишився 1 ────────
   useEffect(() => {
     if (!roomCode || !gameState || gameState.phase === "lobby") return;
     if (Array.isArray(gameState.players) && gameState.players.length <= 1) {
@@ -315,12 +465,21 @@ export default function MyMultiplayerGame() {
 
   // ── Оновлення стану в БД ─────────────────────────────────────────────
   async function updateRoom(newState) {
-    if (!roomCode) return;
-    await supabase
-      .from("rooms")
-      .update({ state: newState, updated_at: new Date().toISOString() })
-      .eq("code", roomCode);
-    // НЕ викликай setGameState — актуальний стан прийде через Realtime
+    if (!roomCode) return false;
+    try {
+      const { error: updateErr } = await supabase
+        .from("rooms")
+        .update({ state: newState, updated_at: new Date().toISOString() })
+        .eq("code", roomCode);
+      if (updateErr) {
+        setConnStatus("reconnecting");
+        return false;
+      }
+      return true;
+    } catch {
+      setConnStatus(typeof navigator !== "undefined" && !navigator.onLine ? "offline" : "reconnecting");
+      return false;
+    }
   }
 
   // ── Хост: створити кімнату ───────────────────────────────────────────
@@ -328,19 +487,25 @@ export default function MyMultiplayerGame() {
     const name = playerName.trim();
     if (!name) return;
     setError("");
+    cleanupStaleRooms(supabase, GAME_SLUG);
+
     const code = generateCode();
     const initialState = {
       phase: "lobby",
       host: name,
       players: [{ name }],
+      lobbyExpiresAt: Date.now() + LOBBY_TTL_MS,
       // ... додай поля своєї гри
     };
     const { error: insertError } = await supabase
       .from("rooms")
       .insert({ code, game: GAME_SLUG, state: initialState });
     if (insertError) return setError("Помилка створення кімнати. Спробуй ще раз.");
+
+    saveRoomSession(GAME_SLUG, { roomCode: code, playerName: name });
     setPlayerName(name);
     setRoomCode(code);
+    setGameState(initialState);
   }
 
   // ── Гравець: приєднатись до кімнати ──────────────────────────────────
@@ -357,7 +522,7 @@ export default function MyMultiplayerGame() {
       .eq("game", GAME_SLUG)
       .single();
 
-    if (!data?.state) return setError("Кімнату не знайдено.");
+    if (!data?.state || data.state.phase === "deleted") return setError("Кімнату не знайдено.");
     if (data.state.phase !== "lobby") return setError("Гра вже почалася.");
     if (data.state.players.some((p) => p.name === name)) {
       return setError(`Ім'я "${name}" вже зайняте.`);
@@ -376,22 +541,36 @@ export default function MyMultiplayerGame() {
       .eq("code", code);
     if (updateError) return setError("Не вдалося приєднатись до кімнати.");
 
+    saveRoomSession(GAME_SLUG, { roomCode: code, playerName: name });
     setPlayerName(name);
     setRoomCode(code);
+    setGameState(newState);
   }
 
   // ── Вихід / розпуск кімнати ──────────────────────────────────────────
   async function leaveRoom() {
     if (!roomCode) return;
-    if (isHost) {
-      await supabase.from("rooms").update({ state: { phase: "deleted" } }).eq("code", roomCode);
-      await supabase.from("rooms").delete().eq("code", roomCode);
-    } else if (gameState?.players) {
-      const remaining = gameState.players.filter((p) => p.name !== playerName);
-      // Тут також очисти голоси / ролі / статуси гравця, що виходить
-      await updateRoom({ ...gameState, players: remaining });
-    }
+    const codeToLeave = roomCode;
+    const stateSnapshot = gameState;
+    const hostLeaving = isHost;
+
     resetLocalRoom();
+
+    try {
+      if (hostLeaving) {
+        await supabase.from("rooms").update({ state: { phase: "deleted" } }).eq("code", codeToLeave);
+        await supabase.from("rooms").delete().eq("code", codeToLeave);
+      } else if (stateSnapshot?.players) {
+        const remaining = stateSnapshot.players.filter((p) => p.name !== playerName);
+        // Тут також очисти голоси / ролі / статуси гравця, що виходить
+        await supabase
+          .from("rooms")
+          .update({ state: { ...stateSnapshot, players: remaining }, updated_at: new Date().toISOString() })
+          .eq("code", codeToLeave);
+      }
+    } catch {
+      // Локальну сесію вже очищено
+    }
   }
 
   // ── Екран підключення ────────────────────────────────────────────────
@@ -428,12 +607,16 @@ export default function MyMultiplayerGame() {
     );
   }
 
-  // ── Екран завантаження стану кімнати ─────────────────────────────────
+  // ── Екран відновлення / завантаження кімнати ─────────────────────────
   if (!gameState) {
     return (
-      <p style={{ color: "var(--text2)", textAlign: "center", padding: "40px 0" }}>
-        Підключення до кімнати {roomCode}...
-      </p>
+      <div style={{ display: "flex", flexDirection: "column", gap: 12, textAlign: "center", padding: "40px 0" }}>
+        <p style={{ margin: 0, fontWeight: 700 }}>Відновлення сесії...</p>
+        <p style={{ margin: 0, color: "var(--text2)" }}>Кімната {roomCode} · {playerName}</p>
+        <button className="btn-secondary" onClick={() => resetLocalRoom()}>
+          Вийти на екран підключення
+        </button>
+      </div>
     );
   }
 
@@ -461,8 +644,15 @@ export default function MyMultiplayerGame() {
 
   return (
     <>
-      {/* Рендериться один раз — кнопка автоматично присутня у всіх фазах */}
       {leavePortal}
+
+      {connStatus !== "connected" && (
+        <div style={{ padding: "10px 14px", marginBottom: 12, borderRadius: "var(--radius-sm)", background: "rgba(245,158,11,0.14)", color: "#fcd34d", fontSize: "0.85rem", fontWeight: 600 }}>
+          {connStatus === "offline"
+            ? "📡 Немає інтернету. Сесію збережено — чекаємо зв'язок..."
+            : "🔄 Відновлення з'єднання..."}
+        </div>
+      )}
 
       {phase === "lobby" && (
         <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
@@ -502,17 +692,19 @@ export default function MyMultiplayerGame() {
 
 ### Ключові принципи multiplayer
 
-- **Обов'язково передавай `game: GAME_SLUG`** у `.insert({ code, game: GAME_SLUG, state })` (колонка `game` у БД має обмеження `NOT NULL`) та фільтруй `.eq("game", GAME_SLUG)` у `joinRoom()`, щоб коди інших ігор не конфліктували.
-- **`gameState` — єдине джерело правди.** Фаза гри (`gameState.phase`) і статус хоста (`gameState.host === playerName`) читаються з `gameState`, без дублювання у локальному state.
-- **`updateRoom(newState)`** — єдиний спосіб оновлювати стан гри; не викликай `setGameState` вручну після нього.
-- **Кнопка виходу в шапці (`#game-header-action`):** завжди рендериться через `createPortal` із класом `.back-btn` та `style={{ color: "#ef4444" }}` і текстом `"🗑 Розпустити"` (хост) / `"🚪 Вийти"` (гравець). Не прикріпляй кнопки виходу `position: fixed` поверх екрану.
-- **Життєвий цикл кімнати (щоб не засмічувати БД):**
-  1. У `leaveRoom()` хост спочатку оновлює `phase: "deleted"`, потім виконує фізичний `DELETE`.
-  2. У `beforeunload` хост відправляє `DELETE` через `fetch(..., { keepalive: true })`.
-  3. Підписка слухає `event: "*"` (і `UPDATE` з `phase === "deleted"`, і `DELETE`), скидаючи клієнта на екран входу з повідомленням через `setError` (без `alert()`).
-  4. Лобі має 5-хвилинний таймаут автовидалення (тільки на стороні хоста).
-  5. Якщо в активній грі виходять гравці і залишається ≤ 1 — гра коректно завершується, а кімната видаляється.
-- **Мобільні браузери:** на iOS/Android згортання браузера зазвичай не викликає `beforeunload`. Для ігор із голосуванням/чергами корисно додавати хосту кнопку виключення (кік) завислого гравця.
+- **Обов'язково передавай `game: GAME_SLUG`** у `.insert({ code, game: GAME_SLUG, state })` (колонка `game` має `NOT NULL`) та фільтруй `.eq("game", GAME_SLUG)` у `joinRoom()` і `syncRoom()`.
+- **`gameState` — єдине джерело правди.** Фаза (`gameState.phase`) і статус хоста (`gameState.host === playerName`) читаються прямо з `gameState`.
+- **НЕ видаляй кімнату в `beforeunload`!** Подія `beforeunload` спрацьовує і при звичайному перезавантаженні сторінки (F5 / pull-to-refresh / перезапуск вкладки в Safari), що знищувало б кімнату для всіх гравців. Замість цього:
+  1. Явний вихід: `leaveRoom()` оновлює `phase: "deleted"` і виконує фізичний `DELETE`.
+  2. Лобі-таймаут: зберігай `lobbyExpiresAt` у `gameState`, щоб таймер не скидався при релоаді хоста.
+  3. Прибирання покинутих кімнат: викликай `cleanupStaleRooms(supabase, GAME_SLUG)` у `createRoom()` + підтримуй `updated_at` хост-heartbeat'ом кожні 5 хв.
+  4. Автозавершення: якщо в активній грі залишається ≤ 1 гравець — завершуй гру і видаляй кімнату.
+- **Стійкість на смартфонах:**
+  - Використовуй `src/lib/roomSession.js` (`localStorage` + `cookie` fallback), щоб пережити перезавантаження і перезапуск вкладки.
+  - Розрізняй `fetchError.code === "PGRST116"` (кімнати реально немає в БД → вихід) від тимчасового збою мережі (залишаємо сесію, показуємо банер і робимо автоперепідключення + polling).
+  - Слухай `visibilitychange`, `online`, `offline` і `pageshow` (`event.persisted` для iOS bfcache).
+  - Для будь-яких ігрових таймерів зберігай у `gameState` кінцевий timestamp (`endsAt`), а не локальний лічильник — тоді таймер не зіб'ється після блокування телефону чи релоаду.
+- **Кнопка виходу в шапці (`#game-header-action`):** завжди рендериться через `createPortal` із класом `.back-btn` та `style={{ color: "#ef4444" }}` і текстом `"🗑 Розпустити"` (хост) / `"🚪 Вийти"` (гравець).
 - **Cleanup під `StrictMode`:** завжди повертай `() => { supabase.removeChannel(channel); }` у `useEffect`.
 
 ### Реєстрація multiplayer-гри (`src/games/registry.js`)
@@ -537,7 +729,7 @@ export default function MyMultiplayerGame() {
 Якщо гра підтримує обидва режими, розділяй їх на окремі файли зі спільним `content.json`:
 
 ```text
-src/games/<slug>/index.jsx        ← екран вибору режиму
+src/games/<slug>/index.jsx        ← екран вибору режиму (авто-відкриття multiplayer при активній сесії)
 src/games/<slug>/local.jsx        ← single-player логіка
 src/games/<slug>/multiplayer.jsx  ← multiplayer логіка
 src/games/<slug>/content.json     ← спільні дані для обох режимів
@@ -548,7 +740,7 @@ src/games/registry.js             ← запис з ОБИДВОМА тегам�
 
 1. Перейменуй поточний `index.jsx` у `local.jsx` (або `multiplayer.jsx`), не переписуючи існуючу логіку з нуля.
 2. Створи відсутній режим (`multiplayer.jsx` або `local.jsx`), перевикористовуючи `content.json`.
-3. Створи новий `index.jsx` з екраном вибору режиму (приклад див. у `src/games/bunker/index.jsx`).
+3. Створи новий `index.jsx` з екраном вибору режиму та перевіркою `loadRoomSession("<slug>")` (еталон — `src/games/bunker/index.jsx`).
 4. У `src/games/registry.js` переконайся, що в `tags` є обидва системні теги: `"мультиплеєр"` і `"pass-and-play"`.
 
 ### Шаблон `index.jsx` (екран вибору режиму)
@@ -557,9 +749,11 @@ src/games/registry.js             ← запис з ОБИДВОМА тегам�
 import { useState } from "react";
 import LocalGame from "./local";
 import MultiplayerGame from "./multiplayer";
+import { loadRoomSession } from "../../lib/roomSession";
 
 export default function UniversalGame() {
-  const [mode, setMode] = useState(null); // null | "local" | "multiplayer"
+  // Якщо є активна онлайн-сесія — після перезавантаження одразу повертаємо в мультиплеєр
+  const [mode, setMode] = useState(() => (loadRoomSession("my-game") ? "multiplayer" : null));
 
   if (mode === "local") return <LocalGame />;
   if (mode === "multiplayer") return <MultiplayerGame />;
@@ -610,6 +804,11 @@ alter publication supabase_realtime add table rooms;
 
 - [ ] Не змінено жодного файлу поза `src/games/` (крім явного запиту користувача).
 - [ ] Гру зареєстровано у `src/games/registry.js` із правильними системними тегами (`"pass-and-play"` та/або `"мультиплеєр"`).
-- [ ] Весь інтерфейс українською, адаптований під вузький мобільний екран (`max-width: 600px`, кнопки ≥ `48px`, інпути `fontSize: 16`).
-- [ ] Для мультиплеєра: передається `game: GAME_SLUG`, кнопка виходу вбудована через портал у `#game-header-action` з класом `.back-btn`, реалізовано `DELETE` при виході/закритті вкладки хоста та обробку `DELETE`/`phase === "deleted"`.
+- [ ] Весь інтерфейс українською, адаптований під мобільний екран (`max-width: 600px`, кнопки ≥ `48px`, інпути `fontSize: 16`).
+- [ ] Для мультиплеєра:
+  - передається `game: GAME_SLUG` у `insert` і `select`;
+  - використано `src/lib/roomSession.js` (`saveRoomSession`, `loadRoomSession`, `clearRoomSession`, `cleanupStaleRooms`), а для universal — авто-відкриття `"multiplayer"` у `index.jsx`;
+  - НЕ використовується `beforeunload` `DELETE` (очищення через `leaveRoom`, `lobbyExpiresAt`, `cleanupStaleRooms` та heartbeat);
+  - реалізовано мобільний reconnect (`visibilitychange`/`online`/`pageshow`, `PGRST116` vs мережевий збій);
+  - кнопка виходу вбудована через портал у `#game-header-action` з класом `.back-btn`.
 - [ ] Виконано `npm run lint` (0 помилок) та `npm run build` (успішна збірка).

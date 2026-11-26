@@ -1,6 +1,15 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import { createPortal } from "react-dom";
 import { supabase } from "../../lib/supabase";
+import {
+  saveRoomSession,
+  loadRoomSession,
+  clearRoomSession,
+  cleanupStaleRooms,
+} from "../../lib/roomSession";
+
+const GAME_SLUG = "mafia";
+const HEARTBEAT_MS = 5 * 60 * 1000; // Оновлення updated_at кожні 5 хв
 
 /* ═══════════════════════════════════════════════
    ROLE REGISTRY — Add new roles here
@@ -303,7 +312,7 @@ function ManiacAction({ night, alive, playerName, onSubmit }) {
   );
 }
 
-function MafiaAction({ night, alive, players, playerName, isDecisionMaker, onVote, onConfirm, onDonCheck, donCheckUsed }) {
+function MafiaAction({ night, alive, players, playerName, onVote, onConfirm, onDonCheck, donCheckUsed }) {
   const [donSel, setDonSel] = useState(null);
   
   const myPlayer = players.find(p => p.name === playerName);
@@ -1146,16 +1155,68 @@ function EndGameScreen({ gameState, playerName, isHost, onRestart }) {
 }
 
 /* ═══════════════════════════════════════════════
+   CONNECTION STATUS BANNER
+═══════════════════════════════════════════════ */
+function ConnectionBanner({ status, onRetry }) {
+  if (status === "connected") return null;
+  const isOffline = status === "offline";
+  return (
+    <div style={{
+      display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10,
+      padding: "10px 14px", marginBottom: 14, borderRadius: "var(--radius-sm)",
+      background: isOffline ? "rgba(252,92,92,0.14)" : "rgba(246,173,85,0.14)",
+      border: `1px solid ${isOffline ? "rgba(252,92,92,0.35)" : "rgba(246,173,85,0.35)"}`,
+      color: isOffline ? "#fc8181" : "#f6ad55", fontSize: "0.85rem", fontWeight: 600,
+    }}>
+      <span>
+        {isOffline
+          ? "📡 Немає інтернету. Сесію збережено — чекаємо зв'язок..."
+          : "🔄 Відновлення з'єднання з кімнатою..."}
+      </span>
+      <button onClick={onRetry} style={{
+        background: "var(--bg2)", color: "var(--text)", border: "1px solid var(--bg3)",
+        borderRadius: 8, padding: "4px 10px", fontSize: "0.8rem", fontWeight: 600,
+        cursor: "pointer", fontFamily: "inherit", flexShrink: 0,
+      }}>
+        Оновити
+      </button>
+    </div>
+  );
+}
+
+/* ═══════════════════════════════════════════════
    MAIN COMPONENT
 ═══════════════════════════════════════════════ */
 export default function MafiaGame() {
-  const [playerName, setPlayerName] = useState("");
-  const [roomCode, setRoomCode] = useState("");
+  const [savedSession] = useState(() => loadRoomSession(GAME_SLUG));
+  const [playerName, setPlayerName] = useState(() => savedSession?.playerName || "");
+  const [roomCode, setRoomCode] = useState(() => savedSession?.roomCode || "");
   const [gameState, setGameState] = useState(null);
   const [error, setError] = useState("");
-  const [inRoom, setInRoom] = useState(false);
+  const [inRoom, setInRoom] = useState(() => Boolean(savedSession?.roomCode && savedSession?.playerName));
+  const [connStatus, setConnStatus] = useState(() =>
+    typeof navigator !== "undefined" && !navigator.onLine ? "offline" : "connected"
+  );
+  const [reconnectTick, setReconnectTick] = useState(0);
 
-  const isHost = !!gameState && playerName === gameState.host;
+  const hiddenAtRef = useRef(null);
+  const connStatusRef = useRef(connStatus);
+  useEffect(() => {
+    connStatusRef.current = connStatus;
+  }, [connStatus]);
+
+  const isHost = Boolean(gameState && playerName === gameState.host);
+
+  const resetRoom = useCallback((message = "") => {
+    clearRoomSession(GAME_SLUG);
+    try { localStorage.removeItem("mafia_session"); } catch { /* ignore */ }
+    setInRoom(false);
+    setRoomCode("");
+    setPlayerName("");
+    setGameState(null);
+    setConnStatus(typeof navigator !== "undefined" && !navigator.onLine ? "offline" : "connected");
+    setError(message);
+  }, []);
 
   /* ── Inject CSS animations ──────────────────────── */
   useEffect(() => {
@@ -1174,76 +1235,181 @@ export default function MafiaGame() {
     return () => { const e = document.getElementById(ID); if (e) e.remove(); };
   }, []);
 
-  /* ── Reconnect from localStorage ────────────────── */
+  /* ── Save session (лобі + активна гра, localStorage + cookie) ───── */
   useEffect(() => {
+    if (!inRoom || !playerName || !roomCode) return;
+    saveRoomSession(GAME_SLUG, { roomCode, playerName });
+  }, [inRoom, playerName, roomCode]);
+
+  /* ── Sync latest room state from DB ─────────────── */
+  const syncRoom = useCallback(async () => {
+    if (!roomCode) return;
+    if (typeof navigator !== "undefined" && !navigator.onLine) {
+      setConnStatus("offline");
+      return;
+    }
+
     try {
-      const saved = JSON.parse(localStorage.getItem("mafia_session") ?? "null");
-      if (saved?.roomCode && saved?.playerName) {
-        setPlayerName(saved.playerName);
-        setRoomCode(saved.roomCode);
-        setInRoom(true);
+      const { data, error: fetchError } = await supabase
+        .from("rooms")
+        .select("state")
+        .eq("code", roomCode)
+        .eq("game", GAME_SLUG)
+        .single();
+
+      if (fetchError) {
+        // PGRST116 — кімнати справді немає в БД; мережеві помилки не скидають сесію
+        if (fetchError.code === "PGRST116") {
+          resetRoom("Кімнату закрито або час очікування вийшов.");
+        } else {
+          setConnStatus("reconnecting");
+        }
+        return;
       }
-    } catch { /* ignore */ }
-  }, []);
 
-  /* ── Save session (тільки після role_reveal, не в лобі) ─────────── */
-  useEffect(() => {
-    if (!gameState || !playerName || !roomCode) return;
-    if (gameState.phase === "lobby") return; // лобі не зберігаємо
-    const myPlayer = gameState.players?.find(p => p.name === playerName);
-    localStorage.setItem("mafia_session", JSON.stringify({ roomCode, playerName, role: myPlayer?.role ?? null }));
-  }, [gameState, playerName, roomCode]);
+      if (!data?.state || data.state.phase === "deleted") {
+        resetRoom("Ведучий завершив гру.");
+        return;
+      }
 
-  /* ── Subscribe to room ──────────────────────────── */
+      const myRecord = data.state.players?.find(p => p.name === playerName);
+      if (!myRecord || myRecord.isLeft) {
+        resetRoom("Тебе немає у списку активних гравців кімнати.");
+        return;
+      }
+
+      setGameState(data.state);
+      setConnStatus("connected");
+    } catch {
+      setConnStatus(typeof navigator !== "undefined" && !navigator.onLine ? "offline" : "reconnecting");
+    }
+  }, [roomCode, playerName, resetRoom]);
+
+  const forceReconnect = useCallback(() => {
+    setConnStatus(typeof navigator !== "undefined" && !navigator.onLine ? "offline" : "reconnecting");
+    syncRoom();
+    setReconnectTick(t => t + 1);
+  }, [syncRoom]);
+
+  /* ── Subscribe to room with auto-reconnect ──────── */
   useEffect(() => {
     if (!roomCode) return;
-    supabase.from("rooms").select("state").eq("code", roomCode).single()
-      .then(({ data, error }) => {
-        if (error || !data?.state) {
-          // Room not found — clear stale session
-          localStorage.removeItem("mafia_session");
-          setInRoom(false);
-          setRoomCode("");
-          setPlayerName("");
-          return;
-        }
-        setGameState(data.state);
-      });
-    const ch = supabase.channel(`mafia:${roomCode}`)
-      .on("postgres_changes", { event: "*", schema: "public", table: "rooms", filter: `code=eq.${roomCode}` },
-        p => {
-          if (p.eventType === "DELETE" || (p.eventType === "UPDATE" && p.new?.state?.phase === "deleted")) {
-            setError("Ведучий завершив гру.");
-            localStorage.removeItem("mafia_session");
-            setInRoom(false);
-            setRoomCode("");
-            setPlayerName("");
-            setGameState(null);
-          } else if (p.eventType === "UPDATE") {
-            setGameState(p.new.state);
-          }
-        })
-      .subscribe();
-    return () => supabase.removeChannel(ch);
-  }, [roomCode]);
 
-  /* ── Cleanup on Tab Close (Host Only) ────────────── */
+    let isActive = true;
+    let retryTimer = null;
+
+    syncRoom();
+
+    const ch = supabase
+      .channel(`mafia:${roomCode}:${reconnectTick}`)
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "rooms", filter: `code=eq.${roomCode}` },
+        (p) => {
+          if (!isActive) return;
+
+          if (p.eventType === "DELETE" || (p.eventType === "UPDATE" && p.new?.state?.phase === "deleted")) {
+            resetRoom("Ведучий завершив гру.");
+            return;
+          }
+
+          if (p.eventType === "UPDATE" && p.new?.state) {
+            const myRecord = p.new.state.players?.find(pl => pl.name === playerName);
+            if (!myRecord || myRecord.isLeft) {
+              resetRoom("Ти покинув(ла) кімнату.");
+              return;
+            }
+            setGameState(p.new.state);
+            setConnStatus("connected");
+          }
+        }
+      )
+      .subscribe((status) => {
+        if (!isActive) return;
+        if (status === "SUBSCRIBED") {
+          setConnStatus("connected");
+          syncRoom();
+        } else if (status === "CHANNEL_ERROR" || status === "TIMED_OUT" || status === "CLOSED") {
+          setConnStatus(typeof navigator !== "undefined" && !navigator.onLine ? "offline" : "reconnecting");
+          if (typeof navigator === "undefined" || navigator.onLine) {
+            clearTimeout(retryTimer);
+            retryTimer = setTimeout(() => {
+              if (isActive) setReconnectTick(t => t + 1);
+            }, 3000);
+          }
+        }
+      });
+
+    return () => {
+      isActive = false;
+      clearTimeout(retryTimer);
+      supabase.removeChannel(ch);
+    };
+  }, [roomCode, playerName, reconnectTick, syncRoom, resetRoom]);
+
+  /* ── Mobile resilience (sleep, app switch, network, iOS bfcache) ── */
+  useEffect(() => {
+    if (!roomCode) return;
+
+    const handleVisibility = () => {
+      if (document.visibilityState === "hidden") {
+        hiddenAtRef.current = Date.now();
+        return;
+      }
+      const awayMs = hiddenAtRef.current ? Date.now() - hiddenAtRef.current : 0;
+      hiddenAtRef.current = null;
+      syncRoom();
+      if (awayMs > 15000 || connStatusRef.current !== "connected") {
+        setReconnectTick(t => t + 1);
+      }
+    };
+
+    const handleOnline = () => {
+      setConnStatus("reconnecting");
+      syncRoom();
+      setReconnectTick(t => t + 1);
+    };
+
+    const handleOffline = () => setConnStatus("offline");
+
+    const handlePageShow = (event) => {
+      if (event.persisted) {
+        syncRoom();
+        setReconnectTick(t => t + 1);
+      }
+    };
+
+    document.addEventListener("visibilitychange", handleVisibility);
+    window.addEventListener("online", handleOnline);
+    window.addEventListener("offline", handleOffline);
+    window.addEventListener("pageshow", handlePageShow);
+
+    return () => {
+      document.removeEventListener("visibilitychange", handleVisibility);
+      window.removeEventListener("online", handleOnline);
+      window.removeEventListener("offline", handleOffline);
+      window.removeEventListener("pageshow", handlePageShow);
+    };
+  }, [roomCode, syncRoom]);
+
+  /* ── Fallback polling while reconnecting ────────── */
+  useEffect(() => {
+    if (!roomCode || connStatus === "connected") return;
+    const pollId = setInterval(() => {
+      if (document.visibilityState === "visible" && navigator.onLine) syncRoom();
+    }, 5000);
+    return () => clearInterval(pollId);
+  }, [roomCode, connStatus, syncRoom]);
+
+  /* ── Host heartbeat (keeps updated_at fresh during long games) ──── */
   useEffect(() => {
     if (!isHost || !roomCode) return;
-    const handleBeforeUnload = () => {
-      // Use keepalive fetch to ensure request is sent before page unloads
-      const url = `${import.meta.env.VITE_SUPABASE_URL}/rest/v1/rooms?code=eq.${roomCode}`;
-      fetch(url, {
-        method: "DELETE",
-        headers: {
-          "apikey": import.meta.env.VITE_SUPABASE_ANON_KEY,
-          "Authorization": `Bearer ${import.meta.env.VITE_SUPABASE_ANON_KEY}`
-        },
-        keepalive: true
-      }).catch(() => {});
-    };
-    window.addEventListener("beforeunload", handleBeforeUnload);
-    return () => window.removeEventListener("beforeunload", handleBeforeUnload);
+    const id = setInterval(() => {
+      if (document.visibilityState === "visible" && navigator.onLine) {
+        supabase.from("rooms").update({ updated_at: new Date().toISOString() }).eq("code", roomCode).then(() => {});
+      }
+    }, HEARTBEAT_MS);
+    return () => clearInterval(id);
   }, [isHost, roomCode]);
 
 
@@ -1271,54 +1437,96 @@ export default function MafiaGame() {
   }, [gameState, isHost]); // eslint-disable-line
 
   async function updateRoom(ns) {
-    await supabase.from("rooms").update({ state: ns, updated_at: new Date().toISOString() }).eq("code", roomCode);
+    if (!roomCode) return false;
+    try {
+      const { error: updateErr } = await supabase
+        .from("rooms")
+        .update({ state: ns, updated_at: new Date().toISOString() })
+        .eq("code", roomCode);
+      if (updateErr) {
+        setConnStatus("reconnecting");
+        return false;
+      }
+      return true;
+    } catch {
+      setConnStatus(typeof navigator !== "undefined" && !navigator.onLine ? "offline" : "reconnecting");
+      return false;
+    }
   }
 
   /* ── Create room ─────────────────────────────────── */
   async function handleCreate(name) {
     setError("");
+    cleanupStaleRooms(supabase, GAME_SLUG);
+
     const code = generateCode();
     const init = { phase: "lobby", host: name, players: [{ name }], nightNumber: 0, round: 0, winner: null, donCheckUsed: false, lobbyExpiresAt: new Date(Date.now() + 5 * 60 * 1000).toISOString() };
-    const { error: e } = await supabase.from("rooms").insert({ code, game: "mafia", state: init });
-    if (e) { setError("Помилка створення. Спробуй ще раз."); return; }
-    setPlayerName(name); setRoomCode(code); setInRoom(true);
+    try {
+      const { error: e } = await supabase.from("rooms").insert({ code, game: GAME_SLUG, state: init });
+      if (e) { setError("Помилка створення. Спробуй ще раз."); return; }
+      saveRoomSession(GAME_SLUG, { roomCode: code, playerName: name });
+      setPlayerName(name); setRoomCode(code); setGameState(init); setInRoom(true); setConnStatus("connected");
+    } catch {
+      setError("Немає з'єднання з сервером.");
+    }
   }
 
   /* ── Join room ───────────────────────────────────── */
   async function handleJoin(name, code) {
     setError("");
-    const { data } = await supabase.from("rooms").select("state").eq("code", code).single();
-    if (!data) { setError("Кімнату не знайдено."); return; }
-    if (data.state.phase !== "lobby") { setError("Гра вже розпочалась."); return; }
-    if (data.state.players.some(p => p.name === name)) { setError(`Ім'я "${name}" вже зайнято.`); return; }
-    if (data.state.players.length >= 12) { setError("Кімната заповнена (макс. 12)."); return; }
-    const ns = { ...data.state, players: [...data.state.players, { name }] };
-    await supabase.from("rooms").update({ state: ns }).eq("code", code);
-    setPlayerName(name); setRoomCode(code); setInRoom(true);
+    try {
+      const { data, error: selectErr } = await supabase
+        .from("rooms")
+        .select("state")
+        .eq("code", code)
+        .eq("game", GAME_SLUG)
+        .single();
+      if (selectErr || !data?.state || data.state.phase === "deleted") { setError("Кімнату не знайдено."); return; }
+      if (data.state.phase !== "lobby") { setError("Гра вже розпочалась."); return; }
+      if (data.state.players.some(p => p.name === name)) { setError(`Ім'я "${name}" вже зайнято.`); return; }
+      if (data.state.players.length >= 12) { setError("Кімната заповнена (макс. 12)."); return; }
+      const ns = { ...data.state, players: [...data.state.players, { name }] };
+      const { error: updateErr } = await supabase
+        .from("rooms")
+        .update({ state: ns, updated_at: new Date().toISOString() })
+        .eq("code", code);
+      if (updateErr) { setError("Не вдалося приєднатись. Спробуй ще раз."); return; }
+      saveRoomSession(GAME_SLUG, { roomCode: code, playerName: name });
+      setPlayerName(name); setRoomCode(code); setGameState(ns); setInRoom(true); setConnStatus("connected");
+    } catch {
+      setError("Немає з'єднання з сервером.");
+    }
   }
 
   /* ── Leave room ──────────────────────────────────── */
   async function handleLeave() {
-    if (isHost) {
-      await supabase.from("rooms").update({ state: { phase: "deleted" } }).eq("code", roomCode);
-      await supabase.from("rooms").delete().eq("code", roomCode);
-    } else {
-      if (gameState.phase === "lobby") {
-        const ns = { ...gameState, players: gameState.players.filter(p => p.name !== playerName) };
-        await supabase.from("rooms").update({ state: ns }).eq("code", roomCode);
-      } else {
-        const ns = {
-          ...gameState,
-          players: gameState.players.map(p => p.name === playerName ? { ...p, isDead: true, isLeft: true } : p)
-        };
-        await supabase.from("rooms").update({ state: ns }).eq("code", roomCode);
+    if (!roomCode) return;
+    const codeToLeave = roomCode;
+    const stateSnapshot = gameState;
+    const hostLeaving = isHost;
+    const nameLeaving = playerName;
+
+    resetRoom();
+
+    try {
+      if (hostLeaving) {
+        await supabase.from("rooms").update({ state: { phase: "deleted" } }).eq("code", codeToLeave);
+        await supabase.from("rooms").delete().eq("code", codeToLeave);
+      } else if (stateSnapshot?.players) {
+        if (stateSnapshot.phase === "lobby") {
+          const ns = { ...stateSnapshot, players: stateSnapshot.players.filter(p => p.name !== nameLeaving) };
+          await supabase.from("rooms").update({ state: ns, updated_at: new Date().toISOString() }).eq("code", codeToLeave);
+        } else {
+          const ns = {
+            ...stateSnapshot,
+            players: stateSnapshot.players.map(p => p.name === nameLeaving ? { ...p, isDead: true, isLeft: true } : p)
+          };
+          await supabase.from("rooms").update({ state: ns, updated_at: new Date().toISOString() }).eq("code", codeToLeave);
+        }
       }
+    } catch {
+      // Локальну сесію вже очищено
     }
-    localStorage.removeItem("mafia_session");
-    setInRoom(false);
-    setRoomCode("");
-    setPlayerName("");
-    setGameState(null);
   }
 
   /* ── Start game ──────────────────────────────────── */
@@ -1368,10 +1576,14 @@ export default function MafiaGame() {
   if (!inRoom) return <JoinScreen onCreateRoom={handleCreate} onJoinRoom={handleJoin} error={error} />;
 
   if (!gameState) return (
-    <div style={{ ...S.center, padding: "48px 0", gap: 16 }}>
+    <div style={{ ...S.center, padding: "40px 0", gap: 16 }}>
+      <ConnectionBanner status={connStatus} onRetry={forceReconnect} />
       <div style={{ fontSize: "2.5rem", animation: "maf-pulse 1.2s ease infinite" }}>⏳</div>
-      <p style={{ color: "var(--text)", fontSize: "1rem", margin: 0 }}>Підключення до кімнати...</p>
-      <p style={{ color: "var(--text2)", fontSize: "0.85rem", margin: 0 }}>Код: {roomCode}</p>
+      <p style={{ color: "var(--text)", fontSize: "1rem", fontWeight: 700, margin: 0 }}>Відновлення сесії...</p>
+      <p style={{ color: "var(--text2)", fontSize: "0.85rem", margin: 0 }}>Кімната {roomCode} · {playerName}</p>
+      <button className="btn-secondary" onClick={() => resetRoom()} style={{ marginTop: 8 }}>
+        Вийти на екран підключення
+      </button>
     </div>
   );
 
@@ -1389,6 +1601,7 @@ export default function MafiaGame() {
         </button>,
         document.getElementById("game-header-action")
       )}
+      <ConnectionBanner status={connStatus} onRetry={forceReconnect} />
       {phase === "lobby" && <LobbyScreen gameState={gameState} roomCode={roomCode} playerName={playerName} isHost={isHost} onStart={handleStart} onLeave={handleLeave} />}
       {phase === "role_reveal" && <RoleRevealScreen gameState={gameState} playerName={playerName} onReady={handleReady} />}
       {phase === "night" && <NightScreen gameState={gameState} playerName={playerName} isHost={isHost} onUpdateRoom={updateRoom} />}
