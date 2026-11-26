@@ -676,51 +676,82 @@ export default function BunkerMultiplayer() {
 
   if (!roomCode) {
     return (
-      <div style={{ display: "flex", flexDirection: "column", gap: 24 }}>
-        <div style={{ textAlign: "center" }}>
-          <div style={{ fontSize: "3rem", marginBottom: 12 }}>🏚️</div>
-          <h1 style={{ fontSize: "2.2rem", fontWeight: 900, margin: 0, color: "var(--accent2)" }}>
+      <div style={{ display: "flex", flexDirection: "column", gap: 18 }}>
+        <div style={{ textAlign: "center", paddingTop: 4 }}>
+          <div style={{ fontSize: "3.2rem", marginBottom: 10 }}>🏚️</div>
+          <h1 style={{ fontSize: "2.1rem", fontWeight: 900, margin: "0 0 6px", color: "var(--accent2)" }}>
             БУНКЕР ОНЛАЙН
           </h1>
-          <p style={{ color: "var(--text2)", fontSize: "0.95rem" }}>
+          <p style={{ color: "var(--text2)", fontSize: "0.95rem", margin: 0 }}>
             3–5 гравців, гра на різних пристроях
           </p>
         </div>
 
-        <div style={{ background: "var(--bg2)", padding: 20, borderRadius: "var(--radius)" }}>
+        {/* Спільне поле імені — окремо від дій */}
+        <div style={{ background: "var(--bg2)", padding: 18, borderRadius: "var(--radius)", border: "1px solid var(--bg3)", display: "flex", flexDirection: "column", gap: 8 }}>
+          <label style={{ fontSize: "0.75rem", fontWeight: 700, letterSpacing: "0.08em", textTransform: "uppercase", color: "var(--text2)" }}>
+            Твоє ім'я
+          </label>
           <input
-            placeholder="Твоє ім'я"
+            placeholder="Як тебе звати?"
             value={playerName}
             onChange={(e) => setPlayerName(e.target.value)}
+            maxLength={18}
+            autoComplete="off"
             style={inputStyle}
           />
-          <button
-            className="btn-primary"
-            onClick={createRoom}
-            disabled={!playerName.trim()}
-            style={{ marginTop: 12 }}
-          >
-            Створити кімнату
-          </button>
         </div>
 
-        <div style={{ background: "var(--bg2)", padding: 20, borderRadius: "var(--radius)" }}>
+        {/* Варіант 1: Створити кімнату (Хост) */}
+        <button
+          className="btn-primary"
+          onClick={createRoom}
+          disabled={!playerName.trim()}
+        >
+          🏠 Створити кімнату
+        </button>
+
+        {/* Розділювач */}
+        <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+          <div style={{ flex: 1, height: 1, background: "var(--bg3)" }} />
+          <span style={{ color: "var(--text2)", fontSize: "0.85rem" }}>або приєднайся за кодом</span>
+          <div style={{ flex: 1, height: 1, background: "var(--bg3)" }} />
+        </div>
+
+        {/* Варіант 2: Увійти в існуючу кімнату (Гравець) */}
+        <div style={{ display: "flex", gap: 8 }}>
           <input
-            placeholder="Код кімнати"
+            placeholder="XXXX"
             value={codeInput}
-            onChange={(e) => setCodeInput(e.target.value)}
-            style={{ ...inputStyle, textTransform: "uppercase" }}
+            onChange={(e) => setCodeInput(e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, ""))}
+            onKeyDown={(e) => e.key === "Enter" && joinRoom()}
+            maxLength={4}
+            autoComplete="off"
+            style={{
+              ...inputStyle,
+              flex: 1,
+              width: "auto",
+              textAlign: "center",
+              letterSpacing: "0.25em",
+              fontWeight: 700,
+              textTransform: "uppercase",
+            }}
           />
           <button
             className="btn-secondary"
             onClick={joinRoom}
-            disabled={!playerName.trim() || !codeInput.trim()}
-            style={{ marginTop: 12 }}
+            disabled={!playerName.trim() || codeInput.trim().length < 4}
+            style={{ width: "auto", padding: "0 20px", whiteSpace: "nowrap", flexShrink: 0 }}
           >
-            Приєднатись
+            Увійти →
           </button>
         </div>
-        {error && <p style={{ color: "#ef4444", textAlign: "center", fontWeight: 600 }}>{error}</p>}
+
+        {error && (
+          <div style={{ background: "rgba(239,68,68,0.1)", border: "1px solid rgba(239,68,68,0.3)", borderRadius: "var(--radius-sm)", padding: "12px 16px" }}>
+            <p style={{ color: "#f87171", margin: 0, fontSize: "0.9rem", fontWeight: 600 }}>⚠️ {error}</p>
+          </div>
+        )}
       </div>
     );
   }
