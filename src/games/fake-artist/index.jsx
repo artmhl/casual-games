@@ -48,7 +48,7 @@ function buildInitialState() {
 
 // ─── Функція перемалювання canvas (спільна) ──────────────────────────────────
 function redrawCanvas(canvas, allPaths) {
-  if (!canvas) return;
+  if (!canvas || !canvas.width || !canvas.height) return;
   const dpr = canvas._dpr || 1;
   const ctx = canvas.getContext("2d");
   ctx.save();
@@ -58,16 +58,19 @@ function redrawCanvas(canvas, allPaths) {
   const lw = canvas.width / dpr;
   const lh = canvas.height / dpr;
   ctx.fillRect(0, 0, lw, lh);
+  const strokeWidth = Math.max(4, Math.min(7, lw * 0.015));
+
   allPaths.forEach((path) => {
-    if (!path.points || path.points.length < 2) return;
+    if (!path?.points || path.points.length < 2) return;
+    const isNorm = Boolean(path.normalized);
     ctx.beginPath();
     ctx.strokeStyle = path.color;
-    ctx.lineWidth = 6;
+    ctx.lineWidth = isNorm ? strokeWidth : 6;
     ctx.lineCap = "round";
     ctx.lineJoin = "round";
-    ctx.moveTo(path.points[0].x, path.points[0].y);
+    ctx.moveTo(isNorm ? path.points[0].x * lw : path.points[0].x, isNorm ? path.points[0].y * lh : path.points[0].y);
     for (let i = 1; i < path.points.length; i++) {
-      ctx.lineTo(path.points[i].x, path.points[i].y);
+      ctx.lineTo(isNorm ? path.points[i].x * lw : path.points[i].x, isNorm ? path.points[i].y * lh : path.points[i].y);
     }
     ctx.stroke();
   });
@@ -75,12 +78,13 @@ function redrawCanvas(canvas, allPaths) {
 }
 
 // ─── Налаштування HiDPI canvas ────────────────────────────────────────────────
-// Множить внутрішню роздільну здатність на devicePixelRatio, CSS-розмір не чіпає.
-// Повертає dpr, щоб можна було враховувати при малюванні.
+// Множить внутрішню роздільну здатність на devicePixelRatio, CSS-висоту синхронізує.
 function setupHiDPICanvas(canvas, cssWidth, cssHeight) {
+  if (!canvas || cssWidth <= 0 || cssHeight <= 0) return 1;
   const dpr = window.devicePixelRatio || 1;
   canvas.width = Math.round(cssWidth * dpr);
   canvas.height = Math.round(cssHeight * dpr);
+  canvas.style.height = `${Math.round(cssHeight)}px`;
   canvas._dpr = dpr; // зберігаємо для redrawCanvas
   return dpr;
 }
@@ -858,8 +862,8 @@ function DrawingScreen({ players, drawPhase, paths, setPaths, onDone, onUndo }) 
   // We keep drawing state in refs to avoid stale closures
   const isDrawing = useRef(false);
   const currentPath = useRef(null);
-  // Track canvas size in a ref so resize handler doesn't go stale
-  const canvasSizeRef = useRef({ w: 0, h: 0 });
+  const pathsRef = useRef(paths);
+  pathsRef.current = paths;
 
   const currentPlayer = players[drawPhase.playerIdx];
   const currentColorRef = useRef(currentPlayer?.color?.hex || "#000");
@@ -869,44 +873,57 @@ function DrawingScreen({ players, drawPhase, paths, setPaths, onDone, onUndo }) 
   currentColorRef.current = currentPlayer?.color?.hex || "#000";
   currentPlayerRef.current = currentPlayer;
 
-  // ─── Set canvas size once on mount, update on resize ────────────────────
+  // ─── Set canvas size on mount, resize, and mobile orientation change ─────
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
     const container = canvas.parentElement;
+    let rafId = null;
 
     const setSize = () => {
       const cssW = container.clientWidth;
+      if (!cssW) return;
       const cssH = Math.min(cssW * 0.72, 380);
-      // HiDPI: внутрішній буфер × devicePixelRatio, CSS-розмір незмінний
       setupHiDPICanvas(canvas, cssW, cssH);
-      canvasSizeRef.current = { w: cssW, h: cssH };
-      redrawCanvas(canvas, paths);
+      const allToDraw = currentPath.current
+        ? [...pathsRef.current, currentPath.current]
+        : pathsRef.current;
+      redrawCanvas(canvas, allToDraw);
+    };
+
+    const scheduleResize = () => {
+      cancelAnimationFrame(rafId);
+      rafId = requestAnimationFrame(setSize);
     };
 
     setSize();
-    const ro = new ResizeObserver(setSize);
+    const ro = new ResizeObserver(scheduleResize);
     ro.observe(container);
-    return () => ro.disconnect();
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+    window.addEventListener("orientationchange", scheduleResize);
+    window.addEventListener("resize", scheduleResize);
+
+    return () => {
+      cancelAnimationFrame(rafId);
+      ro.disconnect();
+      window.removeEventListener("orientationchange", scheduleResize);
+      window.removeEventListener("resize", scheduleResize);
+    };
+  }, []);
 
   // ─── Redraw whenever paths array changes (undo / new stroke committed) ───
   useEffect(() => {
     redrawCanvas(canvasRef.current, paths);
   }, [paths]);
 
-  // ─── Get pointer position in logical CSS pixels ───────────────────────────
-  // Важливо: повертаємо ЛОГІЧНІ пікселі (не фізичні).
-  // redrawCanvas / live-draw самі застосовують setTransform(dpr,...),
-  // тому координати не потребують множення на dpr.
+  // ─── Get pointer position normalized (0..1) so strokes scale on rotation ─
   const getPos = useCallback((e) => {
     const canvas = canvasRef.current;
     if (!canvas) return { x: 0, y: 0 };
     const rect = canvas.getBoundingClientRect();
     const src = e.touches ? e.touches[0] : e;
     return {
-      x: src.clientX - rect.left,
-      y: src.clientY - rect.top,
+      x: rect.width > 0 ? (src.clientX - rect.left) / rect.width : 0,
+      y: rect.height > 0 ? (src.clientY - rect.top) / rect.height : 0,
     };
   }, []);
 
@@ -919,6 +936,7 @@ function DrawingScreen({ players, drawPhase, paths, setPaths, onDone, onUndo }) 
       id: crypto.randomUUID(),
       playerId: currentPlayerRef.current.id,
       color: currentColorRef.current,
+      normalized: true,
       points: [pos],
     };
   }, [getPos]);
@@ -931,7 +949,10 @@ function DrawingScreen({ players, drawPhase, paths, setPaths, onDone, onUndo }) 
     currentPath.current.points.push(pos);
 
     const canvas = canvasRef.current;
+    if (!canvas || !canvas.width || !canvas.height) return;
     const dpr = canvas._dpr || 1;
+    const lw = canvas.width / dpr;
+    const lh = canvas.height / dpr;
     const ctx = canvas.getContext("2d");
     const pts = currentPath.current.points;
     if (pts.length >= 2) {
@@ -939,11 +960,11 @@ function DrawingScreen({ players, drawPhase, paths, setPaths, onDone, onUndo }) 
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
       ctx.beginPath();
       ctx.strokeStyle = currentColorRef.current;
-      ctx.lineWidth = 6;
+      ctx.lineWidth = Math.max(4, Math.min(7, lw * 0.015));
       ctx.lineCap = "round";
       ctx.lineJoin = "round";
-      ctx.moveTo(pts[pts.length - 2].x, pts[pts.length - 2].y);
-      ctx.lineTo(pts[pts.length - 1].x, pts[pts.length - 1].y);
+      ctx.moveTo(pts[pts.length - 2].x * lw, pts[pts.length - 2].y * lh);
+      ctx.lineTo(pts[pts.length - 1].x * lw, pts[pts.length - 1].y * lh);
       ctx.stroke();
       ctx.restore();
     }
@@ -1088,15 +1109,39 @@ function DiscussionScreen({ paths, players, onNext }) {
     return () => clearInterval(id);
   }, []);
 
-  // Size + draw canvas on mount
+  // Size + draw canvas on mount and resize / orientation change
+  const pathsRef = useRef(paths);
+  pathsRef.current = paths;
+
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
     const container = canvas.parentElement;
-    const cssW = container.clientWidth;
-    const cssH = Math.min(cssW * 0.72, 340);
-    setupHiDPICanvas(canvas, cssW, cssH);
-    redrawCanvas(canvas, paths);
+    let rafId = null;
+
+    const render = () => {
+      const cssW = container.clientWidth;
+      if (!cssW) return;
+      const cssH = Math.min(cssW * 0.72, 340);
+      setupHiDPICanvas(canvas, cssW, cssH);
+      redrawCanvas(canvas, pathsRef.current);
+    };
+
+    const scheduleRender = () => {
+      cancelAnimationFrame(rafId);
+      rafId = requestAnimationFrame(render);
+    };
+
+    render();
+    const ro = new ResizeObserver(scheduleRender);
+    ro.observe(container);
+    window.addEventListener("orientationchange", scheduleRender);
+
+    return () => {
+      cancelAnimationFrame(rafId);
+      ro.disconnect();
+      window.removeEventListener("orientationchange", scheduleRender);
+    };
   }, [paths]);
 
   const mins = Math.floor(timeLeft / 60).toString().padStart(2, "0");
@@ -1263,17 +1308,39 @@ function ResultsScreen({ players, fakeIndex, votes, gameWord, paths, onRestart }
   const correctVoters = players.filter((p) => correctVoterIds.includes(p.id));
 
   // ─── Canvas for step 2 ────────────────────────────────────────────────────
+  const pathsRef = useRef(paths);
+  pathsRef.current = paths;
+
   useEffect(() => {
     if (step !== 2 || paths.length === 0) return;
-    requestAnimationFrame(() => {
-      const canvas = canvasRef.current;
-      if (!canvas) return;
-      const container = canvas.parentElement;
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const container = canvas.parentElement;
+    let rafId = null;
+
+    const render = () => {
       const cssW = container.clientWidth;
+      if (!cssW) return;
       const cssH = Math.min(cssW * 0.72, 300);
       setupHiDPICanvas(canvas, cssW, cssH);
-      redrawCanvas(canvas, paths);
-    });
+      redrawCanvas(canvas, pathsRef.current);
+    };
+
+    const scheduleRender = () => {
+      cancelAnimationFrame(rafId);
+      rafId = requestAnimationFrame(render);
+    };
+
+    scheduleRender();
+    const ro = new ResizeObserver(scheduleRender);
+    ro.observe(container);
+    window.addEventListener("orientationchange", scheduleRender);
+
+    return () => {
+      cancelAnimationFrame(rafId);
+      ro.disconnect();
+      window.removeEventListener("orientationchange", scheduleRender);
+    };
   }, [step, paths]);
 
   // ─── Correct voters label ─────────────────────────────────────────────────
