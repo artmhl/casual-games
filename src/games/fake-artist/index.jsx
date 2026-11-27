@@ -1,26 +1,23 @@
 // src/games/fake-artist/index.jsx
-// Гра "Фальшивий художник" — повністю автономна.
-// sessionStorage для збереження імен гравців (як в інших іграх порталу).
+// Гра "Фальшивий художник" — pass-and-play зі збереженням сесії через localSession.
 
 import { useState, useEffect, useRef, useCallback } from "react";
+import {
+  useLocalSession,
+  loadLocalPlayers,
+  saveLocalPlayers,
+} from "../../lib/localSession";
+
+const GAME_SLUG = "fake-artist";
 
 // ─── ЗБЕРЕЖЕННЯ ДАНИХ ────────────────────────────
 
-const SS_KEY = "fake_artist_players_v1";
-
 function loadNames() {
-  try {
-    const raw = sessionStorage.getItem(SS_KEY);
-    return raw ? JSON.parse(raw) : [];
-  } catch {
-    return [];
-  }
+  return loadLocalPlayers(GAME_SLUG, []);
 }
 
 function saveNames(names) {
-  try {
-    sessionStorage.setItem(SS_KEY, JSON.stringify(names));
-  } catch { }
+  saveLocalPlayers(GAME_SLUG, names);
 }
 
 //Завантаження данних
@@ -240,65 +237,116 @@ const S = {
 // ═══════════════════════════════════════════════════════════════════════════════
 // ГОЛОВНИЙ КОМПОНЕНТ
 // ═══════════════════════════════════════════════════════════════════════════════
+const INITIAL_FAKE_ARTIST_SESSION = {
+  screen: "setup",
+  players: [], // [{id, name, color: {name, hex}}]
+  gameWord: null,
+  fakeIndex: null,
+  rolePassIndex: 0,
+  revealShown: false,
+  paths: [],
+  drawPhase: { playerIdx: 0, round: 1 },
+  votePassIndex: 0,
+  votePassShown: true,
+  votes: {},
+  currentVote: null,
+};
+
 export default function FakeArtist() {
-  const [screen, setScreen] = useState("setup");
+  const [session, setSession, resetSession] = useLocalSession(
+    GAME_SLUG,
+    INITIAL_FAKE_ARTIST_SESSION
+  );
 
-  // Гравці: [{id, name, color: {name, hex}}]
-  const [players, setPlayers] = useState([]);
+  const {
+    screen,
+    players,
+    gameWord,
+    fakeIndex,
+    rolePassIndex,
+    revealShown,
+    paths,
+    drawPhase,
+    votePassIndex,
+    votePassShown,
+    votes,
+    currentVote,
+  } = session;
 
-  // Рунд
-  const [gameWord, setGameWord] = useState(null);
-  const [fakeIndex, setFakeIndex] = useState(null);
+  const setPaths = useCallback(
+    (updater) => {
+      setSession((prev) => ({
+        ...prev,
+        paths: typeof updater === "function" ? updater(prev.paths) : updater,
+      }));
+    },
+    [setSession]
+  );
 
-  // Перебір ролей
-  const [rolePassIndex, setRolePassIndex] = useState(0);
-  const [revealShown, setRevealShown] = useState(false);
+  const setRevealShown = useCallback(
+    (val) => {
+      setSession((prev) => ({
+        ...prev,
+        revealShown: typeof val === "function" ? val(prev.revealShown) : val,
+      }));
+    },
+    [setSession]
+  );
 
-  // Малювання — зберігаємо масив шляхів
-  const [paths, setPaths] = useState([]);
-  const [drawPhase, setDrawPhase] = useState({ playerIdx: 0, round: 1 });
-
-  // Голосування
-  const [votePassIndex, setVotePassIndex] = useState(0);
-  const [votePassShown, setVotePassShown] = useState(true);
-  const [votes, setVotes] = useState({});
-  const [currentVote, setCurrentVote] = useState(null);
+  const setCurrentVote = useCallback(
+    (val) => {
+      setSession((prev) => ({
+        ...prev,
+        currentVote: typeof val === "function" ? val(prev.currentVote) : val,
+      }));
+    },
+    [setSession]
+  );
 
   // ─── Старт гри ──────────────────────────────────────────────────────────────
-  const startGame = useCallback((playerList) => {
-    // Зберігаємо імена в sessionStorage перед початком гри
-    saveNames(playerList.map((p) => p.name));
-    const { category, word } = buildInitialState();
-    const fake = Math.floor(Math.random() * playerList.length);
-    setPlayers(playerList);
-    setGameWord({ category, word });
-    setFakeIndex(fake);
-    setRolePassIndex(0);
-    setRevealShown(false);
-    setPaths([]);
-    setDrawPhase({ playerIdx: 0, round: 1 });
-    setVotePassIndex(0);
-    setVotePassShown(true);
-    setVotes({});
-    setCurrentVote(null);
-    setScreen("role_pass");
-  }, []);
+  const startGame = useCallback(
+    (playerList) => {
+      saveNames(playerList.map((p) => p.name));
+      const { category, word } = buildInitialState();
+      const fake = Math.floor(Math.random() * playerList.length);
+      setSession({
+        screen: "role_pass",
+        players: playerList,
+        gameWord: { category, word },
+        fakeIndex: fake,
+        rolePassIndex: 0,
+        revealShown: false,
+        paths: [],
+        drawPhase: { playerIdx: 0, round: 1 },
+        votePassIndex: 0,
+        votePassShown: true,
+        votes: {},
+        currentVote: null,
+      });
+    },
+    [setSession]
+  );
 
   // ─── Перебір ролей ───────────────────────────────────────────────────────────
   const handleRolePassNext = () => {
-    setRevealShown(false);
-    setScreen("role_reveal");
+    setSession((prev) => ({ ...prev, revealShown: false, screen: "role_reveal" }));
   };
 
   const handleRoleHide = () => {
     const next = rolePassIndex + 1;
     if (next >= players.length) {
-      setDrawPhase({ playerIdx: 0, round: 1 });
-      setScreen("drawing");
+      setSession((prev) => ({
+        ...prev,
+        drawPhase: { playerIdx: 0, round: 1 },
+        screen: "drawing",
+      }));
     } else {
-      setRolePassIndex(next);
-      setRevealShown(false);
-      setScreen("role_pass");
+      setSession((prev) => ({
+        ...prev,
+        rolePassIndex: next,
+        revealShown: false,
+        screen: "role_pass",
+      }));
     }
   };
 
@@ -308,12 +356,12 @@ export default function FakeArtist() {
     const nextIdx = playerIdx + 1;
     if (nextIdx >= players.length) {
       if (round === 1) {
-        setDrawPhase({ playerIdx: 0, round: 2 });
+        setSession((prev) => ({ ...prev, drawPhase: { playerIdx: 0, round: 2 } }));
       } else {
-        setScreen("discussion");
+        setSession((prev) => ({ ...prev, screen: "discussion" }));
       }
     } else {
-      setDrawPhase({ playerIdx: nextIdx, round });
+      setSession((prev) => ({ ...prev, drawPhase: { playerIdx: nextIdx, round } }));
     }
   };
 
@@ -328,27 +376,27 @@ export default function FakeArtist() {
   };
 
   // ─── Голосування ─────────────────────────────────────────────────────────────
-  const handleVotePassNext = () => setVotePassShown(false);
+  const handleVotePassNext = () => {
+    setSession((prev) => ({ ...prev, votePassShown: false }));
+  };
 
   const handleVoteSubmit = () => {
     if (!currentVote) return;
     const voterId = players[votePassIndex].id;
-    setVotes((prev) => ({ ...prev, [voterId]: currentVote }));
-    setCurrentVote(null);
     const next = votePassIndex + 1;
-    if (next >= players.length) {
-      setScreen("results");
-    } else {
-      setVotePassIndex(next);
-      setVotePassShown(true);
-    }
+    setSession((prev) => ({
+      ...prev,
+      votes: { ...prev.votes, [voterId]: currentVote },
+      currentVote: null,
+      ...(next >= players.length
+        ? { screen: "results" }
+        : { votePassIndex: next, votePassShown: true }),
+    }));
   };
 
   // ─── Рестарт ─────────────────────────────────────────────────────────────────
   const handleRestart = () => {
-    // Імена вже збережені в sessionStorage через useEffect в SetupScreen
-    setPlayers([]);
-    setScreen("setup");
+    resetSession();
   };
 
   // ═══════════════════════════════════════════════════════════════════════════
@@ -397,11 +445,14 @@ export default function FakeArtist() {
         <DiscussionScreen
           paths={paths}
           players={players}
-          onNext={() => {
-            setVotePassIndex(0);
-            setVotePassShown(true);
-            setScreen("voting");
-          }}
+          onNext={() =>
+            setSession((prev) => ({
+              ...prev,
+              votePassIndex: 0,
+              votePassShown: true,
+              screen: "voting",
+            }))
+          }
         />
       )}
       {screen === "voting" && (

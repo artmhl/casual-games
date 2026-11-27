@@ -1,26 +1,23 @@
 // src/games/toxic-interview/index.jsx
 // Гра "Токсичне Інтерв'ю" — pass-and-play: реєстрація → ролі → передача → таймер → дебрифінг
-// Повністю автономна. Тільки React + sessionStorage для збереження імен.
 
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect } from "react";
+import {
+  useLocalSession,
+  loadLocalPlayers,
+  saveLocalPlayers,
+} from "../../lib/localSession";
+
+const GAME_SLUG = "toxic-interview";
 
 // ─── ЗБЕРЕЖЕННЯ ІМЕН ──────────────────────────────────────────────────────────
 
-const SS_KEY = "toxic_interview_players";
-
 function loadPlayers() {
-  try {
-    const raw = sessionStorage.getItem(SS_KEY);
-    return raw ? JSON.parse(raw) : [];
-  } catch {
-    return [];
-  }
+  return loadLocalPlayers(GAME_SLUG, []);
 }
 
 function savePlayers(arr) {
-  try {
-    sessionStorage.setItem(SS_KEY, JSON.stringify(arr));
-  } catch { }
+  saveLocalPlayers(GAME_SLUG, arr);
 }
 
 // Завантаження данних
@@ -80,65 +77,102 @@ const lbl = (color = "var(--text2)") => ({
 
 // ─── ГОЛОВНИЙ КОМПОНЕНТ ───────────────────────────────────────────────────────
 
+const INITIAL_TOXIC_SESSION = {
+  phase: "setup",
+  roundPlayers: [],
+  roundCandidate: "",
+  roundMinutes: 4,
+  flaw: null,
+  vacancy: null,
+  starterQ: "",
+  timerTotal: 0,
+  timerEndsAt: null,
+};
+
 export default function ToxicInterview() {
-  const [phase, setPhase] = useState("setup");
   const [players, setPlayers] = useState(loadPlayers);
   const [candidate, setCandidate] = useState(() => {
     const saved = loadPlayers();
     return saved[0] || "";
   });
   const [interviewMinutes, setInterviewMinutes] = useState(4);
-  const [flaw, setFlaw] = useState(null);
-  const [vacancy, setVacancy] = useState(null);
-  const [starterQ, setStarterQ] = useState("");
-  const [timerSeconds, setTimerSeconds] = useState(0);
-  const [timerActive, setTimerActive] = useState(false);
-  const [timerTotal, setTimerTotal] = useState(0);
-  const timerRef = useRef(null);
 
-  // Синхронізуємо список гравців з sessionStorage
+  const [session, setSession, resetSession] = useLocalSession(
+    GAME_SLUG,
+    INITIAL_TOXIC_SESSION
+  );
+
+  const {
+    phase,
+    roundPlayers,
+    roundCandidate,
+    roundMinutes,
+    flaw,
+    vacancy,
+    starterQ,
+    timerTotal,
+    timerEndsAt,
+  } = session;
+
+  const [timerSeconds, setTimerSeconds] = useState(() =>
+    timerEndsAt ? Math.max(0, Math.ceil((timerEndsAt - Date.now()) / 1000)) : 0
+  );
+
+  // Синхронізуємо список гравців з локальним сховищем
   useEffect(() => {
     savePlayers(players);
   }, [players]);
 
   useEffect(() => {
-    if (timerActive && timerSeconds > 0) {
-      timerRef.current = setInterval(() => {
-        setTimerSeconds((s) => {
-          if (s <= 1) {
-            clearInterval(timerRef.current);
-            setTimerActive(false);
-            return 0;
-          }
-          return s - 1;
-        });
-      }, 1000);
-    }
-    return () => clearInterval(timerRef.current);
-  }, [timerActive]);
+    if (phase !== "interview" || !timerEndsAt) return;
+    const tick = () => {
+      setTimerSeconds(Math.max(0, Math.ceil((timerEndsAt - Date.now()) / 1000)));
+    };
+    tick();
+    const id = setInterval(tick, 500);
+    const onVis = () => {
+      if (document.visibilityState === "visible") tick();
+    };
+    document.addEventListener("visibilitychange", onVis);
+    return () => {
+      clearInterval(id);
+      document.removeEventListener("visibilitychange", onVis);
+    };
+  }, [phase, timerEndsAt]);
 
   function startGame() {
-    setFlaw(getRandom(CANDIDATE_FLAWS));
-    setVacancy(getRandom(VACANCY_CARDS));
-    setStarterQ(getRandom(STARTER_QUESTIONS));
-    setPhase("handoff_candidate");
+    setSession({
+      phase: "handoff_candidate",
+      roundPlayers: [...players],
+      roundCandidate: candidate,
+      roundMinutes: interviewMinutes,
+      flaw: getRandom(CANDIDATE_FLAWS),
+      vacancy: getRandom(VACANCY_CARDS),
+      starterQ: getRandom(STARTER_QUESTIONS),
+      timerTotal: 0,
+      timerEndsAt: null,
+    });
   }
 
   function startInterview() {
-    const secs = interviewMinutes * 60;
+    const secs = roundMinutes * 60;
+    const endsAt = Date.now() + secs * 1000;
     setTimerSeconds(secs);
-    setTimerTotal(secs);
-    setTimerActive(true);
-    setPhase("interview");
+    setSession((prev) => ({
+      ...prev,
+      phase: "interview",
+      timerTotal: secs,
+      timerEndsAt: endsAt,
+    }));
   }
 
   function stopInterview() {
-    clearInterval(timerRef.current);
-    setTimerActive(false);
-    setPhase("debrief");
+    setSession((prev) => ({ ...prev, phase: "debrief", timerEndsAt: null }));
   }
 
-  const hrNames = players.filter((p) => p !== candidate);
+  const activePlayers = phase === "setup" ? players : roundPlayers;
+  const activeCandidate = phase === "setup" ? candidate : roundCandidate;
+  const hrNames = activePlayers.filter((p) => p !== activeCandidate);
 
   if (phase === "setup") return (
     <SetupScreen
@@ -152,37 +186,47 @@ export default function ToxicInterview() {
     <HandoffScreen
       emoji="🎯" accent="#a855f7"
       bigText="ПЕРЕДАЙТЕ ТЕЛЕФОН" subText="КАНДИДАТУ"
-      name={candidate}
+      name={activeCandidate}
       actionText="Готовий / Готова →"
-      onAction={() => setPhase("candidate_read")}
+      onAction={() => setSession((prev) => ({ ...prev, phase: "candidate_read" }))}
       hint="Решта гравців — відвернись або заплюй очі. Серйозно."
     />
   );
-  if (phase === "candidate_read") return <CandidateScreen flaw={flaw} onDone={() => setPhase("handoff_hr")} />;
+  if (phase === "candidate_read") return (
+    <CandidateScreen
+      flaw={flaw}
+      onDone={() => setSession((prev) => ({ ...prev, phase: "handoff_hr" }))}
+    />
+  );
   if (phase === "handoff_hr") return (
     <HandoffScreen
       emoji="💼" accent="#06b6d4"
       bigText="ПЕРЕДАЙТЕ ТЕЛЕФОН" subText="HR-ВІДДІЛУ"
       name={hrNames.join(", ")}
       actionText="Готові →"
-      onAction={() => setPhase("hr_read")}
-      hint={`${candidate} — не підглядай! Або підглядай — але потім не скаржся.`}
+      onAction={() => setSession((prev) => ({ ...prev, phase: "hr_read" }))}
+      hint={`${activeCandidate} — не підглядай! Або підглядай — але потім не скаржся.`}
     />
   );
   if (phase === "hr_read") return <HRScreen vacancy={vacancy} onStart={startInterview} />;
   if (phase === "interview") return (
     <InterviewScreen
-      candidate={candidate} hrNames={hrNames}
+      candidate={activeCandidate} hrNames={hrNames}
       timerSeconds={timerSeconds} timerTotal={timerTotal}
-      interviewMinutes={interviewMinutes}
+      interviewMinutes={roundMinutes}
       starterQ={starterQ} onStop={stopInterview}
     />
   );
-  if (phase === "debrief") return <DebriefScreen candidate={candidate} hrNames={hrNames} onReveal={() => setPhase("reveal")} />;
+  if (phase === "debrief") return (
+    <DebriefScreen
+      candidate={activeCandidate} hrNames={hrNames}
+      onReveal={() => setSession((prev) => ({ ...prev, phase: "reveal" }))}
+    />
+  );
   if (phase === "reveal") return (
     <RevealScreen
-      flaw={flaw} vacancy={vacancy} candidate={candidate}
-      onRestart={() => { setPhase("setup"); setFlaw(null); setVacancy(null); }}
+      flaw={flaw} vacancy={vacancy} candidate={activeCandidate}
+      onRestart={() => resetSession()}
     />
   );
   return null;

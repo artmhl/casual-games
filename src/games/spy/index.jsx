@@ -1,57 +1,41 @@
 // src/games/spy/index.jsx
 // Гра "Шпигун" — гравці вибирають категорії, отримують слово, а шпигун намагається його відгадати.
-// Повністю автономна. sessionStorage для збереження налаштувань.
 
 import { useState, useEffect, useRef } from "react";
+import {
+  useLocalSession,
+  loadLocalPlayers,
+  saveLocalPlayers,
+  loadLocalPref,
+  saveLocalPref,
+} from "../../lib/localSession";
+
+const GAME_SLUG = "spy";
 
 // ─── ЗБЕРЕЖЕННЯ ДАНИХ ─────────────────────────────────────────────────────────
 
-const SS_KEY = "spy_players_v2";
-const SS_CATS_KEY = "spy_cats_v2";
-const SS_MODE_KEY = "spy_mode_v2";
-
 function loadPlayers() {
-  try {
-    const raw = sessionStorage.getItem(SS_KEY);
-    return raw ? JSON.parse(raw) : [];
-  } catch {
-    return [];
-  }
+  return loadLocalPlayers(GAME_SLUG, []);
 }
 
 function savePlayers(arr) {
-  try {
-    sessionStorage.setItem(SS_KEY, JSON.stringify(arr));
-  } catch { }
+  saveLocalPlayers(GAME_SLUG, arr);
 }
 
 function loadCats() {
-  try {
-    const raw = sessionStorage.getItem(SS_CATS_KEY);
-    return raw ? JSON.parse(raw) : ["city", "professions", "food"];
-  } catch {
-    return ["city", "professions", "food"];
-  }
+  return loadLocalPref(GAME_SLUG, "cats", ["city", "professions", "food"]);
 }
 
 function saveCats(arr) {
-  try {
-    sessionStorage.setItem(SS_CATS_KEY, JSON.stringify(arr));
-  } catch { }
+  saveLocalPref(GAME_SLUG, "cats", arr);
 }
 
 function loadMode() {
-  try {
-    return parseInt(sessionStorage.getItem(SS_MODE_KEY)) || 1;
-  } catch {
-    return 1;
-  }
+  return loadLocalPref(GAME_SLUG, "mode", 1);
 }
 
 function saveMode(mode) {
-  try {
-    sessionStorage.setItem(SS_MODE_KEY, mode.toString());
-  } catch { }
+  saveLocalPref(GAME_SLUG, "mode", mode);
 }
 
 // ─── ЗАВАНТАЖЕННЯ ДАНИХ ────────────────────────────────────────────────────────
@@ -172,42 +156,65 @@ const lbl = (color = "var(--text2)") => ({
 
 // ─── ГОЛОВНИЙ КОМПОНЕНТ ───────────────────────────────────────────────────────
 
+const INITIAL_SPY_SESSION = {
+  phase: "setup",
+  roundPlayers: [],
+  roundMode: 1,
+  roundTimerMinutes: 5,
+  activeWord: null,
+  activeCategory: null,
+  playerRoles: [],
+  currentPlayerIndex: 0,
+  timerEndsAt: null,
+};
+
 export default function SpyGame() {
-  const [phase, setPhase] = useState("setup");
   const [players, setPlayers] = useState(loadPlayers);
   const [selectedCats, setSelectedCats] = useState(loadCats);
   const [mode, setMode] = useState(loadMode);
   const [timerMinutes, setTimerMinutes] = useState(5);
 
-  const [activeWord, setActiveWord] = useState(null);
-  const [activeCategory, setActiveCategory] = useState(null);
-  const [playerRoles, setPlayerRoles] = useState([]);
+  const [session, setSession, resetSession] = useLocalSession(
+    GAME_SLUG,
+    INITIAL_SPY_SESSION
+  );
 
-  const [currentPlayerIndex, setCurrentPlayerIndex] = useState(0);
+  const {
+    phase,
+    roundPlayers,
+    roundMode,
+    roundTimerMinutes,
+    activeWord,
+    activeCategory,
+    playerRoles,
+    currentPlayerIndex,
+    timerEndsAt,
+  } = session;
 
-  const [timerSeconds, setTimerSeconds] = useState(0);
-  const [timerActive, setTimerActive] = useState(false);
-  const timerRef = useRef(null);
+  const [timerSeconds, setTimerSeconds] = useState(() =>
+    timerEndsAt ? Math.max(0, Math.ceil((timerEndsAt - Date.now()) / 1000)) : 0
+  );
 
   useEffect(() => savePlayers(players), [players]);
   useEffect(() => saveCats(selectedCats), [selectedCats]);
   useEffect(() => saveMode(mode), [mode]);
 
   useEffect(() => {
-    if (timerActive && timerSeconds > 0) {
-      timerRef.current = setInterval(() => {
-        setTimerSeconds(s => {
-          if (s <= 1) {
-            clearInterval(timerRef.current);
-            setTimerActive(false);
-            return 0;
-          }
-          return s - 1;
-        });
-      }, 1000);
-    }
-    return () => clearInterval(timerRef.current);
-  }, [timerActive]);
+    if (phase !== "timer" || !timerEndsAt) return;
+    const tick = () => {
+      setTimerSeconds(Math.max(0, Math.ceil((timerEndsAt - Date.now()) / 1000)));
+    };
+    tick();
+    const id = setInterval(tick, 500);
+    const onVis = () => {
+      if (document.visibilityState === "visible") tick();
+    };
+    document.addEventListener("visibilitychange", onVis);
+    return () => {
+      clearInterval(id);
+      document.removeEventListener("visibilitychange", onVis);
+    };
+  }, [phase, timerEndsAt]);
 
   // Генеруємо ролі для гравців
   function startGame() {
@@ -216,13 +223,10 @@ export default function SpyGame() {
     const randomCat = getRandom(pool);
     const randomWord = getRandom(randomCat.words);
 
-    setActiveCategory(randomCat);
-    setActiveWord(randomWord);
-
     // 2. Розподіляємо ролі (Зважена рандомізація)
     const spyCount = mode === 3 ? 2 : 1;
     const chosenSpies = getWeightedSpies(players, spyCount);
-    
+
     let chosenTraitor = null;
     if (mode === 4) {
       const nonSpies = players.filter(p => !chosenSpies.includes(p));
@@ -246,21 +250,27 @@ export default function SpyGame() {
       };
     });
 
-    setPlayerRoles(finalRoles);
-    setCurrentPlayerIndex(0);
-    setPhase("handoff");
+    setSession({
+      phase: "handoff",
+      roundPlayers: [...players],
+      roundMode: mode,
+      roundTimerMinutes: timerMinutes,
+      activeCategory: { id: randomCat.id, name: randomCat.name },
+      activeWord: randomWord,
+      playerRoles: finalRoles,
+      currentPlayerIndex: 0,
+      timerEndsAt: null,
+    });
   }
 
   function startTimerPhase() {
-    setTimerSeconds(timerMinutes * 60);
-    setTimerActive(true);
-    setPhase("timer");
+    const endsAt = Date.now() + roundTimerMinutes * 60 * 1000;
+    setTimerSeconds(roundTimerMinutes * 60);
+    setSession(prev => ({ ...prev, phase: "timer", timerEndsAt: endsAt }));
   }
 
   function stopTimer() {
-    clearInterval(timerRef.current);
-    setTimerActive(false);
-    setPhase("vote");
+    setSession(prev => ({ ...prev, phase: "vote", timerEndsAt: null }));
   }
 
   if (phase === "setup") return (
@@ -274,21 +284,20 @@ export default function SpyGame() {
   );
   if (phase === "handoff") return (
     <HandoffScreen
-      name={players[currentPlayerIndex]}
-      onReady={() => setPhase("show_role")}
+      name={roundPlayers[currentPlayerIndex]}
+      onReady={() => setSession(prev => ({ ...prev, phase: "show_role" }))}
     />
   );
   if (phase === "show_role") {
-    const isLast = currentPlayerIndex === players.length - 1;
+    const isLast = currentPlayerIndex === roundPlayers.length - 1;
     return (
       <RoleScreen
         playerData={playerRoles[currentPlayerIndex]}
-        word={activeWord} categoryName={activeCategory.name} mode={mode}
+        word={activeWord} categoryName={activeCategory?.name || ""} mode={roundMode}
         onNext={() => {
-          if (isLast) setPhase("ready_to_start");
+          if (isLast) setSession(prev => ({ ...prev, phase: "ready_to_start" }));
           else {
-            setCurrentPlayerIndex(c => c + 1);
-            setPhase("handoff");
+            setSession(prev => ({ ...prev, currentPlayerIndex: prev.currentPlayerIndex + 1, phase: "handoff" }));
           }
         }}
       />
@@ -306,17 +315,17 @@ export default function SpyGame() {
   );
   if (phase === "timer") return (
     <TimerScreen
-      timerSeconds={timerSeconds} total={timerMinutes * 60}
+      timerSeconds={timerSeconds} total={roundTimerMinutes * 60}
       onStop={stopTimer} categories={CATEGORIES.filter(c => selectedCats.includes(c.id))}
     />
   );
   if (phase === "vote") return (
-    <VoteScreen onResult={() => setPhase("result")} />
+    <VoteScreen onResult={() => setSession(prev => ({ ...prev, phase: "result" }))} />
   );
   if (phase === "result") return (
     <ResultScreen
-      playerRoles={playerRoles} word={activeWord} categoryName={activeCategory.name} mode={mode}
-      onRestart={() => setPhase("setup")}
+      playerRoles={playerRoles} word={activeWord} categoryName={activeCategory?.name || ""} mode={roundMode}
+      onRestart={() => resetSession()}
     />
   );
 

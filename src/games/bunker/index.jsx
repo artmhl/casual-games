@@ -2,9 +2,14 @@ import { useState } from "react";
 import LocalGame from "./local";
 import MultiplayerGame from "./multiplayer";
 import { loadRoomSession } from "../../lib/roomSession";
+import { hasLocalSession } from "../../lib/localSession";
 
 export default function UniversalBunker() {
-  const [mode, setMode] = useState(() => (loadRoomSession("bunker") ? "multiplayer" : null));
+  const [mode, setMode] = useState(() => {
+    if (loadRoomSession("bunker")) return "multiplayer";
+    if (hasLocalSession("bunker")) return "local";
+    return null;
+  });
 
   if (mode === "local") return <LocalGame />;
   if (mode === "multiplayer") return <MultiplayerGame />;

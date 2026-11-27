@@ -1,6 +1,11 @@
+import { useEffect } from "react";
 import { Link } from "react-router-dom";
+import { markHomeVisited } from "../lib/localSession";
 
 export default function HomePage({ games }) {
+  useEffect(() => {
+    markHomeVisited();
+  }, []);
   const multiplayerGames = games.filter(g => g.tags?.includes("мультиплеєр"));
   const localGames = games.filter(g => !g.tags?.includes("мультиплеєр"));
 

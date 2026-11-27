@@ -1,39 +1,31 @@
 // src/games/who-am-i/index.jsx
 import { useState, useEffect } from "react";
+import {
+  useLocalSession,
+  loadLocalPlayers,
+  saveLocalPlayers,
+  loadLocalPref,
+  saveLocalPref,
+} from "../../lib/localSession";
+
+const GAME_SLUG = "who-am-i";
 
 // ─── ЗБЕРЕЖЕННЯ ДАНИХ ─────────────────────────────────────────────────────────
 
-const SS_KEY = "whoami_players_v1";
-const SS_CATS_KEY = "whoami_cats_v1";
-
 function loadPlayers() {
-  try {
-    const raw = sessionStorage.getItem(SS_KEY);
-    return raw ? JSON.parse(raw) : [];
-  } catch {
-    return [];
-  }
+  return loadLocalPlayers(GAME_SLUG, []);
 }
 
 function savePlayers(arr) {
-  try {
-    sessionStorage.setItem(SS_KEY, JSON.stringify(arr));
-  } catch { }
+  saveLocalPlayers(GAME_SLUG, arr);
 }
 
 function loadCats() {
-  try {
-    const raw = sessionStorage.getItem(SS_CATS_KEY);
-    return raw ? JSON.parse(raw) : ["animals", "professions", "objects"];
-  } catch {
-    return ["animals", "professions", "objects"];
-  }
+  return loadLocalPref(GAME_SLUG, "cats", ["animals", "professions", "objects"]);
 }
 
 function saveCats(arr) {
-  try {
-    sessionStorage.setItem(SS_CATS_KEY, JSON.stringify(arr));
-  } catch { }
+  saveLocalPref(GAME_SLUG, "cats", arr);
 }
 // Завантаження даних
 
@@ -71,56 +63,66 @@ const lbl = (color = "var(--text2)") => ({
 
 // ─── ГОЛОВНИЙ КОМПОНЕНТ ───────────────────────────────────────────────────────
 
-export default function WhoAmIGame() {
-  const [phase, setPhase] = useState("setup");
-  // phases: setup -> handoff -> forehead -> game -> debrief
+const INITIAL_WHOAMI_SESSION = {
+  phase: "setup", // setup -> handoff -> forehead -> game -> debrief
+  roundPlayers: [],
+  currentPlayerIndex: 0,
+  activeWord: null,
+  activeCategoryName: "",
+  activeCondition: "",
+};
 
+export default function WhoAmIGame() {
   const [players, setPlayers] = useState(loadPlayers);
   const [selectedCats, setSelectedCats] = useState(loadCats);
 
-  const [currentPlayerIndex, setCurrentPlayerIndex] = useState(0);
-  const [activeWord, setActiveWord] = useState(null);
-  const [activeCategoryName, setActiveCategoryName] = useState("");
-  const [activeCondition, setActiveCondition] = useState("");
+  const [session, setSession, resetSession] = useLocalSession(
+    GAME_SLUG,
+    INITIAL_WHOAMI_SESSION
+  );
+
+  const {
+    phase,
+    roundPlayers,
+    currentPlayerIndex,
+    activeWord,
+    activeCategoryName,
+    activeCondition,
+  } = session;
 
   useEffect(() => savePlayers(players), [players]);
   useEffect(() => saveCats(selectedCats), [selectedCats]);
 
-  function startRound() {
-    // 1. Generate Word
+  function pickRoundData(prevWord, prevCond) {
     const pool = CATEGORIES.filter(c => selectedCats.includes(c.id));
     const randomCat = getRandom(pool);
-    const randomWord = getRandom(randomCat.words, activeWord);
-
-    // 2. Generate Condition
-    const randomCondition = getRandom(CONDITIONS, activeCondition);
-
-    setActiveCategoryName(randomCat.name);
-    setActiveWord(randomWord);
-    setActiveCondition(randomCondition);
-
-    setPhase("handoff");
-  }
-
-  function nextPlayer() {
-    const nextIdx = (currentPlayerIndex + 1) % players.length;
-    setCurrentPlayerIndex(nextIdx);
-
-    const pool = CATEGORIES.filter(c => selectedCats.includes(c.id));
-    const randomCat = getRandom(pool);
-    const randomWord = getRandom(randomCat.words, activeWord);
-    const randomCondition = getRandom(CONDITIONS, activeCondition);
-
-    setActiveCategoryName(randomCat.name);
-    setActiveWord(randomWord);
-    setActiveCondition(randomCondition);
-
-    setPhase("handoff");
+    return {
+      activeCategoryName: randomCat.name,
+      activeWord: getRandom(randomCat.words, prevWord),
+      activeCondition: getRandom(CONDITIONS, prevCond),
+    };
   }
 
   function handleSetupComplete() {
-    setCurrentPlayerIndex(0);
-    startRound();
+    const roundData = pickRoundData(activeWord, activeCondition);
+    setSession({
+      phase: "handoff",
+      roundPlayers: [...players],
+      currentPlayerIndex: 0,
+      ...roundData,
+    });
+  }
+
+  function nextPlayer() {
+    const list = roundPlayers.length > 0 ? roundPlayers : players;
+    const nextIdx = (currentPlayerIndex + 1) % list.length;
+    const roundData = pickRoundData(activeWord, activeCondition);
+    setSession((prev) => ({
+      ...prev,
+      phase: "handoff",
+      currentPlayerIndex: nextIdx,
+      ...roundData,
+    }));
   }
 
   if (phase === "setup") return (
@@ -132,32 +134,32 @@ export default function WhoAmIGame() {
   );
   if (phase === "handoff") return (
     <HandoffScreen
-      name={players[currentPlayerIndex]}
-      onReady={() => setPhase("forehead")}
+      name={roundPlayers[currentPlayerIndex]}
+      onReady={() => setSession((prev) => ({ ...prev, phase: "forehead" }))}
     />
   );
   if (phase === "forehead") return (
     <ForeheadScreen
-      name={players[currentPlayerIndex]}
-      onReady={() => setPhase("game")}
+      name={roundPlayers[currentPlayerIndex]}
+      onReady={() => setSession((prev) => ({ ...prev, phase: "game" }))}
     />
   );
   if (phase === "game") return (
     <GameScreen
-      name={players[currentPlayerIndex]}
+      name={roundPlayers[currentPlayerIndex]}
       word={activeWord}
       categoryName={activeCategoryName}
       condition={activeCondition}
-      onFinish={() => setPhase("debrief")}
+      onFinish={() => setSession((prev) => ({ ...prev, phase: "debrief" }))}
     />
   );
   if (phase === "debrief") return (
     <DebriefScreen
-      name={players[currentPlayerIndex]}
+      name={roundPlayers[currentPlayerIndex]}
       condition={activeCondition}
       word={activeWord}
       onNext={nextPlayer}
-      onHome={() => setPhase("setup")}
+      onHome={() => resetSession()}
     />
   );
 

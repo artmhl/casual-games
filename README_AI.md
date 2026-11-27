@@ -30,7 +30,8 @@ src/
       content.json       ← (опціонально) великі масиви даних (10+ елементів)
   lib/
     supabase.js          ← готовий Supabase-клієнт (НЕ ЧІПАТИ)
-    roomSession.js       ← платформне збереження сесії + очищення старих кімнат (НЕ ЧІПАТИ)
+    roomSession.js       ← платформне збереження онлайн-сесій + очищення кімнат (НЕ ЧІПАТИ)
+    localSession.js      ← платформне збереження локальних партій і списків гравців (НЕ ЧІПАТИ)
   components/            ← ядро порталу: HomePage, GamePage, LoadingScreen, NotFound (НЕ ЧІПАТИ)
   index.css              ← глобальні стилі та CSS-змінні (НЕ ЧІПАТИ)
   App.jsx                ← авто-роутинг з registry.js (НЕ ЧІПАТИ)
@@ -46,6 +47,7 @@ src/
   - зліва — кнопка `← Назад` (веде на `/`, свою не додавай);
   - по центру — `emoji` + `title` гри;
   - справа — слот `<div id="game-header-action" />` для вбудовування кнопки виходу/розпуску через `createPortal` у мультиплеєрних іграх.
+- Для локальних ігор `GamePage` **автоматично** показує платформний екран **«Продовжити гру / Нова гра»**, якщо гравець вийшов через `← Назад` або повернувся пізніше за наявності активної збереженої партії (при прямому F5 / pull-to-refresh гра відновлюється миттєво без діалогу). Свій діалог відновлення чи кнопку «Спочатку» додавати не потрібно.
 
 ---
 
@@ -105,10 +107,25 @@ src/
 
 ## 1. ЛОКАЛЬНА ГРА (Single-player / Pass-and-Play)
 
+### Платформний модуль локальних сесій (`src/lib/localSession.js`)
+
+Усі локальні ігри використовують `src/lib/localSession.js` — це автоматично дає збереження активної партії (TTL 4 год), миттєве відновлення після перезавантаження та платформний екран **«Продовжити гру / Нова гра»** у `GamePage.jsx` при повторному вході:
+
+```js
+import {
+  useLocalSession,   // [session, setSession, resetSession] — авто-збереження активної партії
+  loadLocalPlayers,  // loadLocalPlayers(GAME_SLUG, []) — постійний список гравців
+  saveLocalPlayers,  // saveLocalPlayers(GAME_SLUG, players)
+  loadLocalPref,     // loadLocalPref(GAME_SLUG, "cats", defaultVal) — постійні налаштування
+  saveLocalPref,     // saveLocalPref(GAME_SLUG, "cats", val)
+  hasLocalSession,   // hasLocalSession(GAME_SLUG) — для universal index.jsx
+} from "../../lib/localSession";
+```
+
 ### Файли
 
 ```text
-src/games/<slug>/index.jsx     ← створити
+src/games/<slug>/index.jsx     ← створити (імпортує localSession)
 src/games/<slug>/content.json  ← створити, якщо масиви мають 10+ елементів
 src/games/registry.js          ← додати запис із тегом "pass-and-play"
 ```
@@ -117,17 +134,48 @@ src/games/registry.js          ← додати запис із тегом "pass
 
 ```jsx
 // src/games/<slug>/index.jsx
-import { useState } from "react";
+import { useState, useEffect } from "react";
+import {
+  useLocalSession,
+  loadLocalPlayers,
+  saveLocalPlayers,
+} from "../../lib/localSession";
 // import content from "./content.json";
 
+const GAME_SLUG = "my-game"; // ОБОВ'ЯЗКОВО збігається зі slug у registry.js
+
+const INITIAL_SESSION = {
+  phase: "setup", // "setup" | "play" | "result" (поки "setup" — активна сесія не зберігається)
+  roundPlayers: [],
+  // ... дані активного раунду (ролі, слово, голоси, timerEndsAt тощо)
+};
+
 export default function MyGame() {
-  const [phase, setPhase] = useState("setup"); // "setup" | "play" | "result"
+  const [players, setPlayers] = useState(() => loadLocalPlayers(GAME_SLUG, []));
+  const [session, setSession, resetSession] = useLocalSession(GAME_SLUG, INITIAL_SESSION);
+
+  useEffect(() => saveLocalPlayers(GAME_SLUG, players), [players]);
+
+  const { phase } = session;
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-      {phase === "setup"  && <Setup  onStart={()   => setPhase("play")}   />}
-      {phase === "play"   && <Play   onEnd={()     => setPhase("result")} />}
-      {phase === "result" && <Result onRestart={() => setPhase("setup")}  />}
+      {phase === "setup" && (
+        <Setup
+          players={players}
+          setPlayers={setPlayers}
+          onStart={() => setSession({ ...INITIAL_SESSION, phase: "play", roundPlayers: [...players] })}
+        />
+      )}
+      {phase === "play" && (
+        <Play
+          session={session}
+          onEnd={() => setSession((prev) => ({ ...prev, phase: "result" }))}
+        />
+      )}
+      {phase === "result" && (
+        <Result session={session} onRestart={() => resetSession()} />
+      )}
     </div>
   );
 }
@@ -750,10 +798,15 @@ import { useState } from "react";
 import LocalGame from "./local";
 import MultiplayerGame from "./multiplayer";
 import { loadRoomSession } from "../../lib/roomSession";
+import { hasLocalSession } from "../../lib/localSession";
 
 export default function UniversalGame() {
-  // Якщо є активна онлайн-сесія — після перезавантаження одразу повертаємо в мультиплеєр
-  const [mode, setMode] = useState(() => (loadRoomSession("my-game") ? "multiplayer" : null));
+  // Авто-відкриття активного режиму після перезавантаження або вибору «Продовжити гру»
+  const [mode, setMode] = useState(() => {
+    if (loadRoomSession("my-game")) return "multiplayer";
+    if (hasLocalSession("my-game")) return "local";
+    return null;
+  });
 
   if (mode === "local") return <LocalGame />;
   if (mode === "multiplayer") return <MultiplayerGame />;
@@ -805,6 +858,7 @@ alter publication supabase_realtime add table rooms;
 - [ ] Не змінено жодного файлу поза `src/games/` (крім явного запиту користувача).
 - [ ] Гру зареєстровано у `src/games/registry.js` із правильними системними тегами (`"pass-and-play"` та/або `"мультиплеєр"`).
 - [ ] Весь інтерфейс українською, адаптований під мобільний екран (`max-width: 600px`, кнопки ≥ `48px`, інпути `fontSize: 16`).
+- [ ] Для локальних ігор: використано `src/lib/localSession.js` (`useLocalSession`, `loadLocalPlayers`, `saveLocalPlayers`), таймери зберігають timestamp `timerEndsAt`, активна сесія очищається через `resetSession()` при поверненні в `setup`.
 - [ ] Для мультиплеєра:
   - передається `game: GAME_SLUG` у `insert` і `select`;
   - використано `src/lib/roomSession.js` (`saveRoomSession`, `loadRoomSession`, `clearRoomSession`, `cleanupStaleRooms`), а для universal — авто-відкриття `"multiplayer"` у `index.jsx`;

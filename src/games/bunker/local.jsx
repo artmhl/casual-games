@@ -2,7 +2,14 @@
 // Гра "Бункер" — Pass-and-Play для 3–5 гравців.
 // Повністю автономна. Тільки React (useState, useEffect, useRef).
 
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
+import {
+  useLocalSession,
+  loadLocalPlayers,
+  saveLocalPlayers,
+} from "../../lib/localSession";
+
+const GAME_SLUG = "bunker";
 
 // Завантаження даних
 
@@ -50,42 +57,58 @@ function generateRoles(playerNames) {
 
 // ─── СХОВИЩЕ ─────────────────────────────────────────────────────────────────
 
-const SS_KEY = "bunker_players_v1";
-
 function loadPlayers() {
-  try {
-    const raw = sessionStorage.getItem(SS_KEY);
-    return raw ? JSON.parse(raw) : [];
-  } catch {
-    return [];
-  }
+  return loadLocalPlayers(GAME_SLUG, []);
 }
 
 function savePlayers(arr) {
-  try {
-    sessionStorage.setItem(SS_KEY, JSON.stringify(arr));
-  } catch { }
+  saveLocalPlayers(GAME_SLUG, arr);
 }
 
 // ─── КОМПОНЕНТ ТАЙМЕРА ────────────────────────────────────────────────────────
 
-function Timer({ seconds, onEnd }) {
-  const [left, setLeft] = useState(seconds);
-  const ref = useRef(null);
+function Timer({ seconds, endsAt, onEnd }) {
+  const calcLeft = useCallback(() => {
+    if (endsAt) return Math.max(0, Math.ceil((endsAt - Date.now()) / 1000));
+    return seconds;
+  }, [endsAt, seconds]);
+
+  const [left, setLeft] = useState(calcLeft);
+  const endedRef = useRef(false);
+  const onEndRef = useRef(onEnd);
+  useEffect(() => {
+    onEndRef.current = onEnd;
+  }, [onEnd]);
 
   useEffect(() => {
-    ref.current = setInterval(() => {
+    endedRef.current = false;
+    setLeft(calcLeft());
+
+    const tick = () => {
+      const remaining = endsAt
+        ? Math.max(0, Math.ceil((endsAt - Date.now()) / 1000))
+        : null;
       setLeft((prev) => {
-        if (prev <= 1) {
-          clearInterval(ref.current);
-          onEnd?.();
-          return 0;
+        const next = remaining !== null ? remaining : Math.max(0, prev - 1);
+        if (next <= 0 && !endedRef.current) {
+          endedRef.current = true;
+          onEndRef.current?.();
         }
-        return prev - 1;
+        return next;
       });
-    }, 1000);
-    return () => clearInterval(ref.current);
-  }, []);
+    };
+
+    const id = setInterval(tick, endsAt ? 500 : 1000);
+    const handleVisibility = () => {
+      if (document.visibilityState === "visible") tick();
+    };
+    document.addEventListener("visibilitychange", handleVisibility);
+
+    return () => {
+      clearInterval(id);
+      document.removeEventListener("visibilitychange", handleVisibility);
+    };
+  }, [endsAt, calcLeft]);
 
   const mins = String(Math.floor(left / 60)).padStart(2, "0");
   const secs = String(left % 60).padStart(2, "0");
@@ -674,12 +697,10 @@ function RoleCard({ role, onDone }) {
 
 // ─── ЕКРАН РОЗПОДІЛУ РОЛЕЙ ────────────────────────────────────────────────────
 
-function RoleDistribution({ roles, onDone }) {
-  const [idx, setIdx] = useState(0);
-
+function RoleDistribution({ roles, idx, onIdxChange, onDone }) {
   function handleDone() {
     if (idx < roles.length - 1) {
-      setIdx(idx + 1);
+      onIdxChange(idx + 1);
     } else {
       onDone();
     }
@@ -732,9 +753,11 @@ function RoleDistribution({ roles, onDone }) {
 
 // ─── ЕКРАН ОБГОВОРЕННЯ ────────────────────────────────────────────────────────
 
-function Discussion({ players, time = 5, onVote }) {
+function Discussion({ players, time = 5, endsAt, onVote }) {
   const DISCUSSION_SECS = time * 60;
-  const [timerDone, setTimerDone] = useState(false);
+  const [timerDone, setTimerDone] = useState(() =>
+    Boolean(endsAt && endsAt <= Date.now())
+  );
   const bunkerSpots = players.length - 1;
 
   return (
@@ -786,7 +809,7 @@ function Discussion({ players, time = 5, onVote }) {
           padding: 24,
         }}
       >
-        <Timer seconds={DISCUSSION_SECS} onEnd={() => setTimerDone(true)} />
+        <Timer seconds={DISCUSSION_SECS} endsAt={endsAt} onEnd={() => setTimerDone(true)} />
         {timerDone && (
           <p
             style={{
@@ -866,9 +889,7 @@ function Discussion({ players, time = 5, onVote }) {
 
 // ─── ЕКРАН ГОЛОСУВАННЯ ────────────────────────────────────────────────────────
 
-function Voting({ players, onDone }) {
-  const [voterIdx, setVoterIdx] = useState(0);
-  const [votes, setVotes] = useState({});
+function Voting({ players, voterIdx, votes, onProgress, onDone }) {
   const [chosen, setChosen] = useState(null);
   const [confirmed, setConfirmed] = useState(false);
 
@@ -878,10 +899,9 @@ function Voting({ players, onDone }) {
   function handleVote() {
     if (!chosen) return;
     const newVotes = { ...votes, [voter]: chosen };
-    setVotes(newVotes);
 
     if (voterIdx < players.length - 1) {
-      setVoterIdx(voterIdx + 1);
+      onProgress(voterIdx + 1, newVotes);
       setChosen(null);
       setConfirmed(false);
     } else {
@@ -1314,38 +1334,58 @@ function Results({ votes, players, roles, onRestart }) {
 
 // ─── ГОЛОВНИЙ КОМПОНЕНТ ───────────────────────────────────────────────────────
 
-export default function BunkerGame() {
-  const [phase, setPhase] = useState("setup");
-  // "setup" | "catastrophe" | "roles" | "discussion" | "voting" | "results"
+const INITIAL_BUNKER_STATE = {
+  phase: "setup", // "setup" | "catastrophe" | "roles" | "discussion" | "voting" | "results"
+  players: [],
+  catastrophe: null,
+  roles: [],
+  votes: {},
+  discussionTime: 5,
+  discussionEndsAt: null,
+  roleIdx: 0,
+  voterIdx: 0,
+};
 
-  const [players, setPlayers] = useState([]);
-  const [catastrophe, setCatastrophe] = useState(null);
-  const [roles, setRoles] = useState([]);
-  const [votes, setVotes] = useState({});
-  const [discussionTime, setDiscussionTime] = useState(5);
+export default function BunkerGame() {
+  const [session, setSession, resetSession] = useLocalSession(
+    GAME_SLUG,
+    INITIAL_BUNKER_STATE
+  );
+
+  const {
+    phase,
+    players,
+    catastrophe,
+    roles,
+    votes,
+    discussionTime,
+    discussionEndsAt,
+    roleIdx,
+    voterIdx,
+  } = session;
 
   function handleStart(playerNames, time) {
-    setDiscussionTime(time);
     const cat = pickRandom(CATASTROPHES);
     const roleList = generateRoles(playerNames);
-    setPlayers(playerNames);
-    setCatastrophe(cat);
-    setRoles(roleList);
-    setVotes({});
-    setPhase("catastrophe");
+    setSession({
+      phase: "catastrophe",
+      players: playerNames,
+      catastrophe: cat,
+      roles: roleList,
+      votes: {},
+      discussionTime: time,
+      discussionEndsAt: null,
+      roleIdx: 0,
+      voterIdx: 0,
+    });
   }
 
   function handleRestart() {
-    setPhase("setup");
-    setPlayers([]);
-    setCatastrophe(null);
-    setRoles([]);
-    setVotes({});
+    resetSession();
   }
 
   function handleVotingDone(finalVotes) {
-    setVotes(finalVotes);
-    setPhase("results");
+    setSession((prev) => ({ ...prev, votes: finalVotes, phase: "results" }));
   }
 
   return (
@@ -1403,23 +1443,46 @@ export default function BunkerGame() {
         {phase === "catastrophe" && catastrophe && (
           <Catastrophe
             catastrophe={catastrophe}
-            onNext={() => setPhase("roles")}
+            onNext={() => setSession((prev) => ({ ...prev, phase: "roles", roleIdx: 0 }))}
           />
         )}
 
         {phase === "roles" && (
           <RoleDistribution
             roles={roles}
-            onDone={() => setPhase("discussion")}
+            idx={roleIdx}
+            onIdxChange={(nextIdx) => setSession((prev) => ({ ...prev, roleIdx: nextIdx }))}
+            onDone={() =>
+              setSession((prev) => ({
+                ...prev,
+                phase: "discussion",
+                discussionEndsAt: Date.now() + (prev.discussionTime || 5) * 60 * 1000,
+              }))
+            }
           />
         )}
 
         {phase === "discussion" && (
-          <Discussion players={players} time={discussionTime} onVote={() => setPhase("voting")} />
+          <Discussion
+            players={players}
+            time={discussionTime}
+            endsAt={discussionEndsAt}
+            onVote={() =>
+              setSession((prev) => ({ ...prev, phase: "voting", voterIdx: 0, votes: {} }))
+            }
+          />
         )}
 
         {phase === "voting" && (
-          <Voting players={players} onDone={handleVotingDone} />
+          <Voting
+            players={players}
+            voterIdx={voterIdx}
+            votes={votes}
+            onProgress={(nextIdx, nextVotes) =>
+              setSession((prev) => ({ ...prev, voterIdx: nextIdx, votes: nextVotes }))
+            }
+            onDone={handleVotingDone}
+          />
         )}
 
         {phase === "results" && (
